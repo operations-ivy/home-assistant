@@ -1,0 +1,77 @@
+#!/bin/sh
+# The setup after onboarding and pairing (README, "First setup"), from the
+# laptop. Needs an administrator's long-lived token in $HA_SETUP_TOKEN_FILE
+# (default ~/.config/home-assistant/setup-token, mode 600); it goes to the pod
+# on stdin and is never printed. Safe to run again: each step skips what's
+# done.
+#
+#   1. Trusted proxies: stage them, let HA restart, check the site through
+#      Caddy, and only then confirm them (otherwise HA reverts in 5 minutes).
+#   2. The ecobee's climate entity becomes climate.thermostat.
+#   3. Panel and Monitoring users, and their tokens: Panel's into brick1982's
+#      ~/.config/lcars/env, Monitoring's sealed into brick-k8s-secrets and
+#      applied for the PodMonitor. Neither is ever printed.
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+token_file=${HA_SETUP_TOKEN_FILE:-$HOME/.config/home-assistant/setup-token}
+site=https://homeassistant.brick.nozdormu.cloud
+secrets_repo=${BRICK_K8S_SECRETS:-$HOME/code/brick-k8s-secrets}
+cert=${SEALED_SECRETS_CERT:-$HOME/code/brick-k8s-config/secrets/sealed-secrets-public-cert.pem}  # secret-scan: allow (a path default, not a credential; user confirmed)
+
+[ -s "$token_file" ] || { echo "setup: no token in $token_file" >&2; exit 1; }
+
+step() {
+    kubectl -n home-assistant exec -i deploy/home-assistant -- \
+        python3 -c "$(cat "$here/setup_ha.py")" "$1" < "$token_file"
+}
+
+wait_up() {
+    for _ in $(seq 60); do
+        code=$(curl -s -o /dev/null -w '%{http_code}' -m 5 "$1" || true)
+        case $code in 200|302) return 0;; esac
+        sleep 5
+    done
+    return 1
+}
+
+if step http-configure | grep -q '"restart": true'; then
+    sleep 10
+    if ! wait_up "$site/"; then
+        echo "setup: $site doesn't answer with the new proxies; HA reverts them in 5 minutes" >&2
+        exit 1
+    fi
+fi
+step http-promote
+
+step entities
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+step users > "$tmp/tokens.json"
+python3 - "$tmp" <<'EOF'
+import json, os, sys
+tmp = sys.argv[1]
+for name, token in json.load(open(os.path.join(tmp, "tokens.json"))).items():
+    path = os.path.join(tmp, name)
+    with open(os.open(path, os.O_WRONLY | os.O_CREAT, 0o600), "w") as f:
+        f.write(token)
+EOF
+
+if [ -f "$tmp/Panel" ]; then
+    # Replace the HA_TOKEN line in the panel's env file, or add one.
+    { printf 'HA_TOKEN='; cat "$tmp/Panel"; echo; } | ssh brick1982 '
+        umask 077; mkdir -p ~/.config/lcars; f=~/.config/lcars/env; touch "$f"
+        line=$(cat); grep -v "^HA_TOKEN=" "$f" > "$f.new" || true
+        echo "$line" >> "$f.new"; mv "$f.new" "$f"'
+    echo "setup: Panel's token is in brick1982's ~/.config/lcars/env"
+fi
+
+if [ -f "$tmp/Monitoring" ]; then
+    mkdir -p "$secrets_repo/home-assistant"
+    sealed="$secrets_repo/home-assistant/home-assistant-prometheus-sealedsecret.yaml"
+    kubectl create secret generic home-assistant-prometheus --namespace home-assistant \
+        --dry-run=client --from-file=token="$tmp/Monitoring" -o yaml |
+        kubeseal --cert "$cert" --format yaml > "$sealed"
+    kubectl apply -f "$sealed"
+    echo "setup: Monitoring's token is sealed in $sealed (commit it there)"
+fi

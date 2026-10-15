@@ -1,0 +1,22 @@
+# Prometheus scrapes HA's /api/prometheus (configuration.yaml's prometheus:,
+# metric names hass_*) as the Monitoring user. Its token is the
+# home-assistant-prometheus Secret, sealed in brick-k8s-secrets by
+# scripts/setup; until then the target shows as down.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: home-assistant
+  namespace: home-assistant
+spec:
+  selector:
+    matchLabels:
+      app: home-assistant
+  podMetricsEndpoints:
+  - port: http
+    path: /api/prometheus
+    interval: 60s
+    authorization:
+      type: Bearer
+      credentials:
+        name: home-assistant-prometheus
+        key: token
