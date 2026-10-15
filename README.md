@@ -75,7 +75,9 @@ Then `scripts/setup` (safe to run again; each step skips what's done):
 Prometheus scrapes `/api/prometheus` as the **Monitoring** user
 (`podmonitor.yaml`; the token is the `home-assistant-prometheus`
 SealedSecret). HA exports temperatures in °C whatever the unit system; the
-dashboard converts. The Grafana dashboard **Home Assistant: the ecobee**
+dashboard converts. Its Internet row comes from the router through HA's UPnP
+integration (WAN status and the whole house's download and upload rates);
+the router's external IP stays off it. The Grafana dashboard **Home Assistant: the ecobee and the internet**
 (`k8s_config/metrics-dashboard.yaml`) is generated: edit
 `tools/dashboard.py`, run `python3 tools/dashboard.py
 k8s_config/metrics-dashboard.yaml` (`--exprs` lists its queries, for checking

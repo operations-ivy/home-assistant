@@ -121,12 +121,45 @@ panels.append({"type": "table", "title": "Unavailable entities", "description": 
                "fieldConfig": {"defaults": {}, "overrides": []}, "options": {"showHeader": True},
                "gridPos": {"h": 7, "w": 24, "x": 0, "y": 37}, "id": nid()})
 
+# The router, through HA's UPnP integration ("Verizon Router"). Its rates
+# are KiB/s; shown in bits/s like an internet plan. The external IP is a
+# state, not a number, and stays off this (public) dashboard.
+WAN = 'entity="binary_sensor.verizon_router_wan_status"'
+DOWN = 'max(hass_sensor_data_rate_kib_per_s{entity="sensor.verizon_router_download_speed"})'
+UP = 'max(hass_sensor_data_rate_kib_per_s{entity="sensor.verizon_router_upload_speed"})'
+BITS = " * 1024 * 8"
+row("Internet (the router, over UPnP)", 44)
+stat("WAN", "The router's internet connection.", f"max(hass_binary_sensor_state{{{WAN}}})", 0, 45,
+     mappings={"0": {"text": "Down", "color": "red", "index": 0}, "1": {"text": "Up", "color": "green", "index": 1}},
+     color="background")
+stat("Download now", "Whole-house download rate, from the router.", DOWN + BITS, 4, 45, "bps", decimals=1)
+stat("Upload now", "Whole-house upload rate, from the router.", UP + BITS, 8, 45, "bps", decimals=1)
+stat("Downloaded, 24h", "Data downloaded in the last 24 hours (the rate, added up minute by minute).",
+     f"sum_over_time(({DOWN})[24h:1m]) * 60 * 1024", 12, 45, "bytes", decimals=1)
+stat("Uploaded, 24h", "Data uploaded in the last 24 hours (the rate, added up minute by minute).",
+     f"sum_over_time(({UP})[24h:1m]) * 60 * 1024", 16, 45, "bytes", decimals=1)
+stat("WAN drops, 24h", "Times the connection went down in the last 24 hours.",
+     f"sum(changes(hass_binary_sensor_state{{{WAN}}}[24h])) / 2", 20, 45, decimals=0)
+series("Throughput", "Whole-house download and upload, from the router.",
+       [(DOWN + BITS, "Download"), (UP + BITS, "Upload")], 0, 49, 24, 8, "bps", 1)
+panels.append({"type": "state-timeline", "title": "WAN status", "description": "Up or down over time.",
+               "datasource": DS, "targets": [tgt(f"max(hass_binary_sensor_state{{{WAN}}})", "WAN")],
+               "fieldConfig": {"defaults": {"color": {"mode": "thresholds"},
+                                            "thresholds": {"mode": "absolute", "steps": [{"color": "text", "value": None}]},
+                                            "mappings": [{"type": "value", "options": {
+                                                "0": {"text": "Down", "color": "red", "index": 0},
+                                                "1": {"text": "Up", "color": "green", "index": 1}}}],
+                                            "custom": {"fillOpacity": 80, "lineWidth": 0}}, "overrides": []},
+               "options": {"showValue": "auto", "mergeValues": True, "rowHeight": 0.8, "alignValue": "left",
+                           "legend": {"showLegend": False}},
+               "gridPos": {"h": 3, "w": 24, "x": 0, "y": 57}, "id": nid()})
+
 dash = {"annotations": {"list": [{"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": True,
                                   "hide": True, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"}]},
         "editable": True, "fiscalYearStartMonth": 0, "graphTooltip": 1, "id": None, "links": [], "refresh": "1m",
-        "schemaVersion": 41, "tags": ["home-assistant", "ecobee", "brick2000"], "templating": {"list": []},
+        "schemaVersion": 41, "tags": ["home-assistant", "ecobee", "internet", "brick2000"], "templating": {"list": []},
         "time": {"from": "now-24h", "to": "now"}, "timepicker": {}, "timezone": "browser",
-        "title": "Home Assistant: the ecobee", "uid": "home-assistant", "version": 1, "panels": panels}
+        "title": "Home Assistant: the ecobee and the internet", "uid": "home-assistant", "version": 1, "panels": panels}
 body = json.dumps(dash, indent=2, ensure_ascii=False)
 out = sys.argv[1]
 with open(out, "w") as f:
