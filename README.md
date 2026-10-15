@@ -38,27 +38,44 @@ thermostat locally over HomeKit (ecobee issues no new cloud API keys since
 The thermostat must be `climate.thermostat` (rename its entity after pairing,
 below).
 
-## First setup (by hand, once)
+## First setup
+
+By hand, once:
 
 1. `kubectl apply -f k8s_config/` and wait for the pod to be Ready.
-2. Open the UI and create the owner account. Pick the **US customary**
-   unit system: the guardrails are in °F.
-   It also discovers brick2000's Bluetooth adapter: ignore it. Nothing here
-   uses Bluetooth, and without `NET_ADMIN` it only logs errors.
+2. Open `http://brick2000:8123` and create the owner account. Pick the
+   **US customary** unit system: the guardrails are in °F. It also discovers
+   brick2000's Bluetooth adapter: ignore it. Nothing here uses Bluetooth,
+   and without `NET_ADMIN` it only logs errors.
 3. On the ecobee: Main menu → Settings → HomeKit, which shows a pairing code.
    In HA, Settings → Devices → the discovered ecobee (HomeKit Device) →
    enter the code.
-4. Rename its climate entity to `climate.thermostat`.
-5. Create a user **Panel** (not an administrator), sign in as it, and make a
-   long-lived access token under its profile. The panel uses it, so its
-   changes show under that name in the logbook. The token goes in
-   brick1982's `~/.config/lcars/env`, never in git.
+4. Make a long-lived access token on the owner's profile (Security tab) and
+   save it, alone, in `~/.config/home-assistant/setup-token` on the laptop
+   (mode 600). Delete it from HA after step 5 if you like; nothing keeps it.
+
+Then `scripts/setup` (safe to run again; each step skips what's done):
+
+5. **Trusted proxies.** Since 2026.10 HA keeps its HTTP config in storage
+   (the YAML is migrated once, then ignored) and reverts a new one unless
+   it's confirmed within 5 minutes. The script stages Caddy, Traefik's nodes
+   and the pod network as trusted proxies, waits for the restart, checks the
+   site through Caddy, and only then confirms them.
+6. Renames the ecobee's climate entity to `climate.thermostat`.
+7. Creates two users, **Panel** and **Monitoring** (not administrators,
+   local only, passwords never kept), each with a 10-year token. Panel's
+   goes into brick1982's `~/.config/lcars/env` (the panel's changes show
+   under that name in the logbook); Monitoring's is sealed into
+   brick-k8s-secrets (`home-assistant/`, commit it there) and applied for
+   the PodMonitor. Neither is printed. To replace one, delete the user in HA
+   and run the script again.
 
 ## Changes
 
 1. Branch, change, `scripts/test`: the tests run inside the pinned Home
-   Assistant image (needs Docker), including HA's own `check_config` on the
-   YAML, and check the guardrail templates' arithmetic.
+   Assistant image (needs Docker): HA's own `check_config` on the YAML, the
+   guardrail templates' arithmetic, and `scripts/setup_ha.py` against a
+   throwaway HA in the container (onboarded through its API).
 2. `kubectl diff -f k8s_config/`, then `kubectl apply -f k8s_config/`, and a
    rollout restart for YAML changes.
 3. Upgrades: bump the image tag in `deployment.yaml` (an exact version), run

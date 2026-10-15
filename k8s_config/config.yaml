@@ -14,13 +14,9 @@ data:
     homeassistant:
       packages: !include_dir_named packages
 
-    http:
-      # Requests come through Caddy on brick9000 and then Traefik, which
-      # reaches this host-network pod from the pod network.
-      use_x_forwarded_for: true
-      trusted_proxies:
-        - 10.42.0.0/16
-        - 192.168.1.221
+    # No http: here. Since 2026.10 HA migrates it to storage once and then
+    # ignores it, and a new HTTP config must be confirmed within 5 minutes
+    # or it reverts; scripts/setup sets the trusted proxies that way.
 
     # /api/prometheus, scraped with a long-lived token (podmonitor.yaml).
     prometheus:
