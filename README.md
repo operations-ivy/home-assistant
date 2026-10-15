@@ -70,6 +70,17 @@ Then `scripts/setup` (safe to run again; each step skips what's done):
    the PodMonitor. Neither is printed. To replace one, delete the user in HA
    and run the script again.
 
+## Metrics
+
+Prometheus scrapes `/api/prometheus` as the **Monitoring** user
+(`podmonitor.yaml`; the token is the `home-assistant-prometheus`
+SealedSecret). HA exports temperatures in °C whatever the unit system; the
+dashboard converts. The Grafana dashboard **Home Assistant: the ecobee**
+(`k8s_config/metrics-dashboard.yaml`) is generated: edit
+`tools/dashboard.py`, run `python3 tools/dashboard.py
+k8s_config/metrics-dashboard.yaml` (`--exprs` lists its queries, for checking
+against live Prometheus), and apply.
+
 ## Changes
 
 1. Branch, change, `scripts/test`: the tests run inside the pinned Home
