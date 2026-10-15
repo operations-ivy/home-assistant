@@ -32,7 +32,7 @@ thermostat locally over HomeKit (ecobee issues no new cloud API keys since
 | --- | --- |
 | `input_number.thermostat_setpoint_min` / `_max` | The guardrails, 64 and 76 °F, reset from git on every restart. |
 | `input_select.lcars_panel_lock` | `normal`: the panel asks for its code. `unlocked`: no code, for 10 minutes (a trusted phone). `hard_locked`: no changes from the panel at all. |
-| automation `thermostat_guardrails` | Pulls any setpoint outside the guardrails back to the nearest one, whoever set it. |
+| automation `thermostat_guardrails` | Pulls any setpoint outside the guardrails back to the nearest one, whoever set it. **Paused** (`initial_state: false`) while the LCARS panel is read-only, so HA never changes the ecobee; remove that line to turn it back on. |
 | automation `lcars_panel_unlock_expires` | `unlocked` returns to `normal` after 10 minutes. |
 
 The thermostat must be `climate.thermostat` (rename its entity after pairing,
@@ -69,6 +69,17 @@ Then `scripts/setup` (safe to run again; each step skips what's done):
    brick-k8s-secrets (`home-assistant/`, commit it there) and applied for
    the PodMonitor. Neither is printed. To replace one, delete the user in HA
    and run the script again.
+
+## Metrics
+
+Prometheus scrapes `/api/prometheus` as the **Monitoring** user
+(`podmonitor.yaml`; the token is the `home-assistant-prometheus`
+SealedSecret). HA exports temperatures in °C whatever the unit system; the
+dashboard converts. The Grafana dashboard **Home Assistant: the ecobee**
+(`k8s_config/metrics-dashboard.yaml`) is generated: edit
+`tools/dashboard.py`, run `python3 tools/dashboard.py
+k8s_config/metrics-dashboard.yaml` (`--exprs` lists its queries, for checking
+against live Prometheus), and apply.
 
 ## Changes
 
