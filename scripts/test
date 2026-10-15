@@ -1,0 +1,8 @@
+#!/bin/sh
+# Runs tests/ inside the Home Assistant image that k8s_config/deployment.yaml
+# pins, so check_config, the YAML loader and the templates are that version's.
+set -eu
+here=$(cd "$(dirname "$0")/.." && pwd)
+image=$(sed -n 's/^ *image: *\(ghcr.io\/home-assistant\/home-assistant:[^ ]*\)$/\1/p' "$here/k8s_config/deployment.yaml")
+exec docker run --rm -v "$here:/repo:ro" --entrypoint python3 "$image" \
+    -m unittest discover -s /repo/tests -v

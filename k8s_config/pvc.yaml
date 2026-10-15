@@ -1,0 +1,14 @@
+# /config: everything set in the UI (users, the ecobee's HomeKit pairing,
+# the unit system, dashboards) under .storage, plus the recorder's SQLite
+# history. local-path, so it lives on brick2000's NVMe like every other PV.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: home-assistant-config
+  namespace: home-assistant
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi

@@ -1,0 +1,126 @@
+# Home Assistant's YAML, from git. The pod mounts configuration.yaml over the
+# volume's copy and the packages read-only into /config/packages, so a change
+# here is `kubectl apply` plus a restart. What's set in the UI stays on the
+# volume (pvc.yaml).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: home-assistant-config
+  namespace: home-assistant
+data:
+  configuration.yaml: |
+    default_config:
+
+    homeassistant:
+      packages: !include_dir_named packages
+
+    http:
+      # Requests come through Caddy on brick9000 and then Traefik, which
+      # reaches this host-network pod from the pod network.
+      use_x_forwarded_for: true
+      trusted_proxies:
+        - 10.42.0.0/16
+        - 192.168.1.221
+
+    # /api/prometheus, scraped with a long-lived token (podmonitor.yaml).
+    prometheus:
+      namespace: hass
+
+  # The LCARS panel on brick1982 (operations-ivy/rpi_lcars): its
+  # lock, and the thermostat's guardrails, which hold for every client, not
+  # just the panel. Setpoints are in °F (the US customary unit system).
+  lcars_panel.yaml: |
+    input_number:
+      # The guardrails, reset from here on every restart; the panel's arrows
+      # stop at them too.
+      thermostat_setpoint_min:
+        name: Thermostat lowest setpoint
+        min: 50
+        max: 90
+        step: 1
+        initial: 64
+        unit_of_measurement: "°F"
+        mode: box
+      thermostat_setpoint_max:
+        name: Thermostat highest setpoint
+        min: 50
+        max: 90
+        step: 1
+        initial: 76
+        unit_of_measurement: "°F"
+        mode: box
+
+    input_select:
+      # normal: the panel asks for its code before a change. unlocked: no code
+      # (a trusted phone, for 10 minutes). hard_locked: no changes from the
+      # panel, code or not. Keeps its state across restarts.
+      lcars_panel_lock:
+        name: LCARS panel lock
+        icon: mdi:shield-lock
+        options:
+          - normal
+          - unlocked
+          - hard_locked
+
+    automation:
+      - id: lcars_panel_unlock_expires
+        alias: LCARS panel unlock expires
+        triggers:
+          - trigger: state
+            entity_id: input_select.lcars_panel_lock
+            to: unlocked
+            for:
+              minutes: 10
+        actions:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.lcars_panel_lock
+            data:
+              option: normal
+
+      # Pulls any setpoint outside the guardrails back to the nearest one,
+      # whoever set it: the panel, the app, or the thermostat's own screen.
+      - id: thermostat_guardrails
+        alias: Thermostat guardrails
+        mode: queued
+        triggers:
+          - trigger: state
+            entity_id: climate.thermostat
+            attribute: temperature
+          - trigger: state
+            entity_id: climate.thermostat
+            attribute: target_temp_low
+          - trigger: state
+            entity_id: climate.thermostat
+            attribute: target_temp_high
+          - trigger: state
+            entity_id:
+              - input_number.thermostat_setpoint_min
+              - input_number.thermostat_setpoint_max
+          - trigger: homeassistant
+            event: start
+        variables:
+          lo: "{{ states('input_number.thermostat_setpoint_min') | float(64) }}"
+          hi: "{{ states('input_number.thermostat_setpoint_max') | float(76) }}"
+          t: "{{ state_attr('climate.thermostat', 'temperature') }}"
+          low: "{{ state_attr('climate.thermostat', 'target_temp_low') }}"
+          high: "{{ state_attr('climate.thermostat', 'target_temp_high') }}"
+        actions:
+          - choose:
+              - conditions: "{{ t is number and (t < lo or t > hi) }}"
+                sequence:
+                  - action: climate.set_temperature
+                    target:
+                      entity_id: climate.thermostat
+                    data:
+                      temperature: "{{ [[t, lo] | max, hi] | min }}"
+              - conditions: >-
+                  {{ low is number and high is number
+                     and (low < lo or high > hi) }}
+                sequence:
+                  - action: climate.set_temperature
+                    target:
+                      entity_id: climate.thermostat
+                    data:
+                      target_temp_low: "{{ [[low, lo] | max, hi] | min }}"
+                      target_temp_high: "{{ [[high, lo] | max, hi] | min }}"

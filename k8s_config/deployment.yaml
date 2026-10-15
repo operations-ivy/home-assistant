@@ -1,0 +1,86 @@
+# One Home Assistant, on brick2000 with its volume. Host networking, because
+# HomeKit (the ecobee) is found and reached over mDNS on the LAN; that also
+# puts the UI on brick2000:8123.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: home-assistant
+  namespace: home-assistant
+spec:
+  replicas: 1
+  # One Home Assistant at a time on its volume and the HomeKit pairing.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: home-assistant
+  template:
+    metadata:
+      labels:
+        app: home-assistant
+    spec:
+      nodeSelector:
+        chuck.io/storage-node: "true"
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+      - name: home-assistant
+        image: ghcr.io/home-assistant/home-assistant:2026.10.1
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: TZ
+          value: America/New_York
+        ports:
+        - name: http
+          containerPort: 8123
+        volumeMounts:
+        - name: config
+          mountPath: /config
+        - name: yaml
+          mountPath: /config/configuration.yaml
+          subPath: configuration.yaml
+          readOnly: true
+        - name: packages
+          mountPath: /config/packages
+          readOnly: true
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          # No CPU limit: its first start installs integrations' packages.
+          limits:
+            memory: 1536Mi
+        # The first start can take minutes; after that, / answers unauthenticated.
+        startupProbe:
+          httpGet:
+            path: /
+            port: 8123
+          periodSeconds: 10
+          failureThreshold: 60
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8123
+          periodSeconds: 30
+          failureThreshold: 4
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8123
+          periodSeconds: 10
+      volumes:
+      - name: config
+        persistentVolumeClaim:
+          claimName: home-assistant-config
+      - name: yaml
+        configMap:
+          name: home-assistant-config
+          items:
+          - key: configuration.yaml
+            path: configuration.yaml
+      - name: packages
+        configMap:
+          name: home-assistant-config
+          items:
+          - key: lcars_panel.yaml
+            path: lcars_panel.yaml
