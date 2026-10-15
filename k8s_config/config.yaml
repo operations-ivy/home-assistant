@@ -78,6 +78,10 @@ data:
       # whoever set it: the panel, the app, or the thermostat's own screen.
       - id: thermostat_guardrails
         alias: Thermostat guardrails
+        # Paused while the panel is read-only (the user, 2026-10-15): with it
+        # on, HA changes the ecobee whenever anyone sets it outside the
+        # guardrails. Delete this line when the panel gets controls back.
+        initial_state: false
         mode: queued
         triggers:
           - trigger: state

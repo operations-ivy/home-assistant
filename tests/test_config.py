@@ -100,6 +100,11 @@ class LcarsPanel(unittest.TestCase):
         self.assertEqual(n["thermostat_setpoint_min"]["initial"], 64)
         self.assertEqual(n["thermostat_setpoint_max"]["initial"], 76)
 
+    def test_guardrails_start_paused_while_the_panel_is_read_only(self):
+        # The user, 2026-10-15: HA watches the ecobee and never changes it.
+        # Turning the guardrails back on is a deliberate change to this test.
+        self.assertIs(self.automation("thermostat_guardrails")["initial_state"], False)
+
     def test_lock_modes(self):
         sel = self.pkg["input_select"]["lcars_panel_lock"]
         self.assertEqual(sel["options"], ["normal", "unlocked", "hard_locked"])
