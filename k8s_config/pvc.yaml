@@ -6,6 +6,10 @@ kind: PersistentVolumeClaim
 metadata:
   name: home-assistant-config
   namespace: home-assistant
+  annotations:
+    # Home Assistant's data: Argo CD never prunes or deletes it, even if this
+    # file or the Application goes away (brick-k8s-config#42).
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   accessModes: ["ReadWriteOnce"]
   storageClassName: local-path
