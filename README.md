@@ -19,8 +19,8 @@ thermostat locally over HomeKit (ecobee issues no new cloud API keys since
 - **YAML from git** (`config.yaml`, a ConfigMap): `configuration.yaml` is
   mounted over the volume's, and packages go read-only into
   `/config/packages`. Everything else is set in the UI and lives on the
-  volume. A YAML change is `kubectl apply` plus
-  `kubectl -n home-assistant rollout restart deploy/home-assistant`.
+  volume. A YAML change is a merge (Argo CD applies `k8s_config/` from
+  `main`) plus `kubectl -n home-assistant rollout restart deploy/home-assistant`.
 - **Through the front door**: Caddy on brick9000, then Traefik
   (`ingress.yaml`). Both are trusted proxies, so HA logs the real client.
 
@@ -42,7 +42,8 @@ below).
 
 By hand, once:
 
-1. `kubectl apply -f k8s_config/` and wait for the pod to be Ready.
+1. Argo CD creates everything in `k8s_config/` (brick-k8s-config's
+   `argocd/apps/home-assistant.yaml`); wait for the pod to be Ready.
 2. Open `http://brick2000:8123` and create the owner account. Pick the
    **US customary** unit system: the guardrails are in °F. It also discovers
    brick2000's Bluetooth adapter: ignore it. Nothing here uses Bluetooth,
@@ -89,7 +90,8 @@ against live Prometheus), and apply.
    Assistant image (needs Docker): HA's own `check_config` on the YAML, the
    guardrail templates' arithmetic, and `scripts/setup_ha.py` against a
    throwaway HA in the container (onboarded through its API).
-2. `kubectl diff -f k8s_config/`, then `kubectl apply -f k8s_config/`, and a
-   rollout restart for YAML changes.
+2. Merge: Argo CD deploys `k8s_config/` from `main` within about 3 minutes and
+   puts back changes made by hand. A YAML change also needs the rollout restart.
+   To try the branch first: `scripts/trial-branch home-assistant <branch>` in brick-k8s-config (and `scripts/trial-branch home-assistant main` after the merge).
 3. Upgrades: bump the image tag in `deployment.yaml` (an exact version), run
-   `scripts/test` against it, apply.
+   `scripts/test` against it, merge.
