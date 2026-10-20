@@ -5,8 +5,10 @@
 # on stdin and is never printed. Safe to run again: each step skips what's
 # done.
 #
-#   1. Trusted proxies: stage them, let HA restart, check the site through
-#      Caddy, and only then confirm them (otherwise HA reverts in 5 minutes).
+#   1. Trusted proxies (the pod network and every node's address, read from
+#      the cluster; run this again after a node joins or leaves): stage them,
+#      let HA restart, check the site through Caddy, and only then confirm
+#      them (otherwise HA reverts in 5 minutes).
 #   2. The ecobee's climate entity becomes climate.thermostat.
 #   3. Panel and Monitoring users, and their tokens: Panel's into brick1982's
 #      ~/.config/lcars/env, Monitoring's sealed into brick-k8s-secrets and
@@ -22,8 +24,12 @@ cert=${SEALED_SECRETS_CERT:-$HOME/code/brick-k8s-config/secrets/sealed-secrets-p
 
 step() {
     kubectl -n home-assistant exec -i deploy/home-assistant -- \
-        python3 -c "$(cat "$here/setup_ha.py")" "$1" < "$token_file"
+        python3 -c "$(cat "$here/setup_ha.py")" "$@" < "$token_file"
 }
+
+# k3s's pod network, then each node's address (one per line).
+proxies=$(kubectl get nodes -o jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address}/32{"\n"}{end}')
+[ -n "$proxies" ] || { echo "setup: can't read the nodes' addresses" >&2; exit 1; }
 
 wait_up() {
     for _ in $(seq 60); do
@@ -34,7 +40,7 @@ wait_up() {
     return 1
 }
 
-if step http-configure | grep -q '"restart": true'; then
+if step http-configure 10.42.0.0/16 $proxies | grep -q '"restart": true'; then
     sleep 10
     if ! wait_up "$site/"; then
         echo "setup: $site doesn't answer with the new proxies; HA reverts them in 5 minutes" >&2

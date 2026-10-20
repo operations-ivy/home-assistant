@@ -21,11 +21,10 @@ import aiohttp
 BASE = "http://127.0.0.1:8123"
 CLIENT_ID = "http://127.0.0.1:8123/"
 
-# Traefik reaches this host-network pod from the nodes' addresses (it's
-# masqueraded across nodes) or the pod network; brick9000's Caddy is the
-# proxy before it, so the real client is the address before Caddy's.
-TRUSTED_PROXIES = ["10.42.0.0/16", "192.168.1.170/32", "192.168.1.171/32",
-                   "192.168.1.183/32", "192.168.1.221/32"]
+# The trusted proxies are passed in by scripts/setup: the pod network (the
+# front door's Caddy and Traefik are pods) and every node's address, because
+# Traefik on another node reaches this host-network pod masqueraded as that
+# node. HA only takes addresses here, so setup reads them from the cluster.
 THERMOSTAT = "climate.thermostat"
 USERS = {"Panel": "lcars-panel", "Monitoring": "prometheus"}
 TOKEN_DAYS = 3650
@@ -62,11 +61,13 @@ class WS:
                 return msg["result"]
 
 
-async def http_configure(ws):
+async def http_configure(ws, trusted_proxies):
+    if not trusted_proxies:
+        raise SystemExit("http-configure: no trusted proxies given")
     current = await ws.call("http/config")
     conf = {k: v for k, v in current["stable"].items()
             if k not in ("created_at", "error", "error_message")}
-    conf.update(use_x_forwarded_for=True, trusted_proxies=TRUSTED_PROXIES)
+    conf.update(use_x_forwarded_for=True, trusted_proxies=trusted_proxies)
     result = await ws.call("http/config/configure", config=conf)
     log("http: pending config staged;", "restarting" if result["restart"] else "unchanged")
     print(json.dumps(result))
@@ -135,13 +136,13 @@ async def users(session, ws):
     print(json.dumps(tokens))
 
 
-async def main(step):
+async def main(step, args):
     token = sys.stdin.readline().strip()
     if not token:
         raise SystemExit("no administrator token on stdin")
     async with aiohttp.ClientSession() as session, WS(session, token) as ws:
         if step == "http-configure":
-            await http_configure(ws)
+            await http_configure(ws, args)
         elif step == "http-promote":
             await http_promote(ws)
         elif step == "entities":
@@ -153,4 +154,4 @@ async def main(step):
 
 
 if __name__ == "__main__":
-    asyncio.run(main(sys.argv[1] if len(sys.argv) > 1 else ""))
+    asyncio.run(main(sys.argv[1] if len(sys.argv) > 1 else "", sys.argv[2:]))
