@@ -73,10 +73,11 @@ stat("Doing now", "What the ecobee is doing.", f'max by (action) (hass_climate_a
 stat("Outside", "From the LCARS panel's weather (National Weather Service, or a backup).",
      "lcars_weather_temperature_fahrenheit", 20, 1, "fahrenheit", decimals=1)
 
-series("Temperatures", "Inside, the setpoint, and outside, all in °F.",
+series("Temperatures", "Inside (the ecobee, downstairs), the setpoint, outside, and the bedroom (brick1982's sensor), all in °F.",
        [(F(f"max(hass_climate_current_temperature_celsius{{{TH}}})"), "Inside"),
         (F(f"max(hass_climate_target_temperature_celsius{{{TH}}})"), "Target"),
-        ("lcars_weather_temperature_fahrenheit", "Outside")], 0, 5, 16, 9, "fahrenheit", 1, minzero=False)
+        ("lcars_weather_temperature_fahrenheit", "Outside"),
+        ("lcars_room_temperature_fahrenheit", "Bedroom")], 0, 5, 16, 9, "fahrenheit", 1, minzero=False)
 stat("Cooling, 24h", "Hours the ecobee spent cooling in the last 24 hours.",
      f'sum_over_time((max(hass_climate_action{{{TH},action="cooling"}}) or vector(0))[24h:1m]) / 60', 16, 5, "h", decimals=1)
 stat("Heating, 24h", "Hours the ecobee spent heating in the last 24 hours.",
@@ -89,7 +90,9 @@ panels[-1]["gridPos"]["h"] = 5
 panels[-2]["gridPos"]["h"] = 5
 timeline("What it's doing", "The ecobee's activity over time.", ACTIONS, "hass_climate_action", "action", 0, 14, 24, 5)
 timeline("Mode", "What the ecobee was set to.", MODES, "hass_climate_mode", "mode", 0, 19, 12, 5)
-series("Humidity", "Indoor relative humidity.", [('max(hass_sensor_humidity_percent{entity="sensor.my_ecobee_current_humidity"})', "Humidity")],
+series("Humidity", "Indoor relative humidity: the ecobee's (downstairs) and the bedroom's (brick1982's sensor).",
+       [('max(hass_sensor_humidity_percent{entity="sensor.my_ecobee_current_humidity"})', "Ecobee"),
+        ("lcars_room_humidity_percent", "Bedroom")],
        12, 19, 12, 5, "percent", 0)
 
 row("Home Assistant", 24)

@@ -439,7 +439,7 @@ data:
         {
           "type": "timeseries",
           "title": "Temperatures",
-          "description": "Inside, the setpoint, and outside, all in °F.",
+          "description": "Inside (the ecobee, downstairs), the setpoint, outside, and the bedroom (brick1982's sensor), all in °F.",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -471,6 +471,15 @@ data:
               },
               "expr": "lcars_weather_temperature_fahrenheit",
               "legendFormat": "Outside"
+            },
+            {
+              "refId": "D",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "lcars_room_temperature_fahrenheit",
+              "legendFormat": "Bedroom"
             }
           ],
           "fieldConfig": {
@@ -953,7 +962,7 @@ data:
         {
           "type": "timeseries",
           "title": "Humidity",
-          "description": "Indoor relative humidity.",
+          "description": "Indoor relative humidity: the ecobee's (downstairs) and the bedroom's (brick1982's sensor).",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -966,7 +975,16 @@ data:
                 "uid": "prometheus"
               },
               "expr": "max(hass_sensor_humidity_percent{entity=\"sensor.my_ecobee_current_humidity\"})",
-              "legendFormat": "Humidity"
+              "legendFormat": "Ecobee"
+            },
+            {
+              "refId": "B",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "lcars_room_humidity_percent",
+              "legendFormat": "Bedroom"
             }
           ],
           "fieldConfig": {

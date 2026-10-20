@@ -26,6 +26,29 @@ data:
   # lock, and the thermostat's guardrails, which hold for every client, not
   # just the panel. Setpoints are in °F (the US customary unit system).
   lcars_panel.yaml: |
+    # The bedroom's own temperature and humidity: the SHT35 on brick1982,
+    # read from the panel (/room.json). Read-only: nothing acts on them.
+    # Unavailable while the panel or its sensor is down.
+    rest:
+      - resource: http://brick1982:8767/room.json
+        scan_interval: 60
+        timeout: 10
+        sensor:
+          - name: Bedroom temperature
+            unique_id: lcars_bedroom_temperature
+            value_template: "{{ value_json.temperature_f }}"
+            availability: "{{ value_json.up | default(false) }}"
+            device_class: temperature
+            state_class: measurement
+            unit_of_measurement: "°F"
+          - name: Bedroom humidity
+            unique_id: lcars_bedroom_humidity
+            value_template: "{{ value_json.humidity }}"
+            availability: "{{ value_json.up | default(false) }}"
+            device_class: humidity
+            state_class: measurement
+            unit_of_measurement: "%"
+
     input_number:
       # The guardrails, reset from here on every restart; the panel's arrows
       # stop at them too.
