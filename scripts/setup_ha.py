@@ -10,6 +10,10 @@ long-lived token comes on stdin, never in argv. One step per run:
                     local only) with a long-lived token each, printed as JSON
                     on stdout for scripts/setup to put in place; skipped for a
                     user that already exists
+    disable D...    disable every config entry of the integrations named
+                    (setup: bluetooth, which default_config discovers for the
+                    node's adapter and which only logs errors without
+                    NET_ADMIN); skipped for an entry already disabled
 """
 import asyncio
 import json
@@ -98,6 +102,21 @@ async def entities(ws):
     log(f"entities: {old} -> {THERMOSTAT}")
 
 
+async def disable(ws, domains):
+    if not domains:
+        raise SystemExit("disable: no integrations given")
+    for domain in domains:
+        entries = await ws.call("config_entries/get", domain=domain)
+        if not entries:
+            log(f"disable: no {domain} entry")
+        for entry in entries:
+            if entry["disabled_by"]:
+                log(f"disable: {domain} {entry['title']!r} already disabled")
+                continue
+            await ws.call("config_entries/disable", entry_id=entry["entry_id"], disabled_by="user")
+            log(f"disable: {domain} {entry['title']!r} disabled")
+
+
 async def user_token(session, username, password, client_name):
     """Sign in as the new user and make its long-lived token."""
     async with session.post(f"{BASE}/auth/login_flow", json={
@@ -149,6 +168,8 @@ async def main(step, args):
             await entities(ws)
         elif step == "users":
             await users(session, ws)
+        elif step == "disable":
+            await disable(ws, args)
         else:
             raise SystemExit(f"unknown step {step!r}")
 
