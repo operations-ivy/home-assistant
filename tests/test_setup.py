@@ -69,8 +69,8 @@ class Setup(unittest.TestCase):
             async with WS(s, access) as ws:
                 return await ws.call("auth/long_lived_access_token", client_name="test", lifespan=1)
 
-    def step(self, name):
-        return subprocess.run([sys.executable, SETUP, name], input=self.admin + "\n",
+    def step(self, name, *args):
+        return subprocess.run([sys.executable, SETUP, name, *args], input=self.admin + "\n",
                               capture_output=True, text=True, timeout=120)
 
     async def is_admin(self, token):
@@ -114,6 +114,43 @@ class Setup(unittest.TestCase):
         r = self.step("entities")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("pair the ecobee first", r.stderr)
+
+    async def sun_entry(self):
+        """The sun integration's config entry (made once; it needs no hardware)."""
+        import aiohttp
+        from setup_ha import WS
+
+        async with aiohttp.ClientSession() as s:
+            async with WS(s, self.admin) as ws:
+                entries = await ws.call("config_entries/get", domain="sun")
+            if entries:
+                return entries[0]
+            auth = {"Authorization": f"Bearer {self.admin}"}
+            async with s.post(BASE + "/api/config/config_entries/flow", json={"handler": "sun"},
+                              headers=auth) as r:
+                flow = await r.json()
+            if flow["type"] == "form":  # a confirm step with no fields
+                async with s.post(BASE + f"/api/config/config_entries/flow/{flow['flow_id']}",
+                                  json={}, headers=auth) as r:
+                    flow = await r.json()
+            self.assertEqual(flow["type"], "create_entry")
+            async with WS(s, self.admin) as ws:
+                return (await ws.call("config_entries/get", domain="sun"))[0]
+
+    def test_disable_turns_an_integration_off_once(self):
+        self.assertIsNone(asyncio.run(self.sun_entry())["disabled_by"])
+        r = self.step("disable", "sun")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("disabled", r.stderr)
+        self.assertEqual(asyncio.run(self.sun_entry())["disabled_by"], "user")
+        again = self.step("disable", "sun")
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertIn("already disabled", again.stderr)
+
+    def test_disable_without_an_entry_is_fine(self):
+        r = self.step("disable", "bluetooth")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("no bluetooth entry", r.stderr)
 
     def test_a_bad_token_is_refused(self):
         r = subprocess.run([sys.executable, SETUP, "users"], input="not-a-token\n",

@@ -13,6 +13,8 @@
 #   3. Panel and Monitoring users, and their tokens: Panel's into brick1982's
 #      ~/.config/lcars/env, Monitoring's sealed into brick-k8s-secrets and
 #      applied for the PodMonitor. Neither is ever printed.
+#   4. Bluetooth off: default_config discovers the node's adapter, and
+#      without NET_ADMIN (nothing here uses it) it only logs tracebacks.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 token_file=${HA_SETUP_TOKEN_FILE:-$HOME/.config/home-assistant/setup-token}
@@ -50,6 +52,8 @@ fi
 step http-promote
 
 step entities
+
+step disable bluetooth
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
