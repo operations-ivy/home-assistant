@@ -34,6 +34,8 @@ thermostat locally over HomeKit (ecobee issues no new cloud API keys since
 | `input_select.lcars_panel_lock` | `normal`: the panel asks for its code. `unlocked`: no code, for 10 minutes (a trusted phone). `hard_locked`: no changes from the panel at all. |
 | automation `thermostat_guardrails` | Pulls any setpoint outside the guardrails back to the nearest one, whoever set it. **Paused** (`initial_state: false`) while the LCARS panel is read-only, so HA never changes the ecobee; remove that line to turn it back on. |
 | `sensor.bedroom_temperature` / `_humidity` | The bedroom's SHT35 on brick1982, polled from the panel's `/room.json` every minute. Read-only: nothing acts on them. |
+| `binary_sensor.lcars_panel_room_reading` | On while `/room.json` answers with a reading, checked with `curl` outside HA's HTTP client. |
+| automation `lcars_bedroom_sensor_watchdog` | If the panel has had a reading for 15 minutes and `sensor.bedroom_temperature` still has none, restarts HA, at most once every 2 hours (`input_datetime.lcars_room_watchdog_last_restart`). HA started while brick1982 was off on 2026-10-23 and its rest sensors never recovered; `rest.reload` didn't help, a restart did (#9). |
 | automation `lcars_panel_unlock_expires` | `unlocked` returns to `normal` after 10 minutes. |
 
 The thermostat must be `climate.thermostat` (rename its entity after pairing,

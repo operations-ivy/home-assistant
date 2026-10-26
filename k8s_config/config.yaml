@@ -49,6 +49,26 @@ data:
             state_class: measurement
             unit_of_measurement: "%"
 
+    # Whether the panel's /room.json answers with a reading, checked by curl
+    # outside HA's own HTTP client. The watchdog below compares it with the
+    # bedroom sensors.
+    command_line:
+      - binary_sensor:
+          name: LCARS panel room reading
+          unique_id: lcars_panel_room_reading
+          command: curl -sf -m 10 http://brick1982:8767/room.json
+          value_template: "{{ 'on' if value_json is defined and value_json.up else 'off' }}"
+          payload_on: "on"
+          payload_off: "off"
+          scan_interval: 60
+
+    input_datetime:
+      # When the watchdog last restarted HA; restored across restarts.
+      lcars_room_watchdog_last_restart:
+        name: Bedroom sensor watchdog last restart
+        has_date: true
+        has_time: true
+
     input_number:
       # The guardrails, reset from here on every restart; the panel's arrows
       # stop at them too.
@@ -82,6 +102,47 @@ data:
           - hard_locked
 
     automation:
+      # HA started while brick1982 was off (2026-10-23) and its rest sensors
+      # never recovered: every retry timed out though the panel answered
+      # curl, and rest.reload didn't help; only a restart did. So when the
+      # panel has had a reading for 15 minutes and HA still has none,
+      # restart HA, at most once every 2 hours.
+      - id: lcars_bedroom_sensor_watchdog
+        alias: Bedroom sensor watchdog
+        mode: single
+        triggers:
+          - trigger: time_pattern
+            minutes: "/5"
+        conditions:
+          - condition: state
+            entity_id: binary_sensor.lcars_panel_room_reading
+            state: "on"
+            for:
+              minutes: 15
+          - condition: template
+            value_template: >-
+              {% set s = states.sensor.bedroom_temperature %}
+              {{ s is none or (s.state in ['unavailable', 'unknown']
+                 and now() - s.last_changed > timedelta(minutes=15)) }}
+          - condition: template
+            value_template: >-
+              {{ as_timestamp(now()) - as_timestamp(states('input_datetime.lcars_room_watchdog_last_restart'), 0)
+                 > 2 * 3600 }}
+        actions:
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: input_datetime.lcars_room_watchdog_last_restart
+            data:
+              timestamp: "{{ now().timestamp() }}"
+          - action: system_log.write
+            data:
+              level: warning
+              logger: lcars_bedroom_sensor_watchdog
+              message: >-
+                The panel's /room.json has a reading but sensor.bedroom_temperature
+                is {{ states('sensor.bedroom_temperature') }}: restarting Home Assistant.
+          - action: homeassistant.restart
+
       - id: lcars_panel_unlock_expires
         alias: LCARS panel unlock expires
         triggers:
