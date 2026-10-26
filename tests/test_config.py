@@ -116,6 +116,26 @@ class LcarsPanel(unittest.TestCase):
         self.assertEqual(a["triggers"][0]["for"], {"minutes": 10})
         self.assertEqual(a["actions"][0]["data"], {"option": "normal"})
 
+    def test_bedroom_sensor_watchdog_restarts_at_most_every_2_hours(self):
+        a = self.automation("lcars_bedroom_sensor_watchdog")
+        self.assertEqual(a["mode"], "single")
+        panel, stuck, rate = a["conditions"]
+        self.assertEqual(panel["entity_id"], "binary_sensor.lcars_panel_room_reading")
+        self.assertEqual(panel["for"], {"minutes": 15})
+        self.assertIn("sensor.bedroom_temperature", stuck["value_template"])
+        self.assertIn("2 * 3600", rate["value_template"])
+        # The time is saved before the restart, or it would restart again.
+        self.assertEqual([x["action"] for x in a["actions"]],
+                         ["input_datetime.set_datetime", "system_log.write", "homeassistant.restart"])
+        self.assertNotIn("initial", self.pkg["input_datetime"]["lcars_room_watchdog_last_restart"])
+
+    def test_panel_reading_needs_up(self):
+        check = self.pkg["command_line"][0]["binary_sensor"]
+        self.assertEqual(check["command"].split()[-1], self.pkg["rest"][0]["resource"])
+        for doc, want in (({"up": True}, "on"), ({"up": False}, "off")):
+            self.assertEqual(render(check["value_template"], value_json=doc), want)
+        self.assertEqual(render(check["value_template"]), "off")  # not JSON
+
     def clamp(self, which, **v):
         choose = self.automation("thermostat_guardrails")["actions"][0]["choose"]
         branch = choose[0] if which == "temperature" else choose[1]
