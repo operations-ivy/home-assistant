@@ -24,11 +24,16 @@ class _Loader(yaml.SafeLoader):
 _Loader.add_multi_constructor("!", lambda loader, tag, node: f"{tag} {node.value}")
 
 
+def kustomization():
+    with open(os.path.join(K8S, "kustomization.yaml")) as f:
+        return yaml.safe_load(f)
+
+
 def manifests():
     docs = []
     for path in sorted(glob.glob(os.path.join(K8S, "*.yaml"))):
         with open(path) as f:
-            docs += [d for d in yaml.safe_load_all(f) if d]
+            docs += [d for d in yaml.safe_load_all(f) if d and d["kind"] != "Kustomization"]
     return docs
 
 
@@ -37,7 +42,14 @@ def find(kind, name):
 
 
 def configmap():
-    return find("ConfigMap", "home-assistant-config")["data"]
+    """The generated ConfigMap's data: its keys and the ha/ files behind them."""
+    gen = next(g for g in kustomization()["configMapGenerator"] if g["name"] == "home-assistant-config")
+    data = {}
+    for item in gen["files"]:
+        key, path = item.split("=", 1)
+        with open(os.path.join(K8S, path)) as f:
+            data[key] = f.read()
+    return data
 
 
 def write_config_dir(path):
@@ -73,6 +85,26 @@ class Manifests(unittest.TestCase):
         for d in manifests():
             if d["kind"] != "Namespace":
                 self.assertEqual(d["metadata"]["namespace"], "home-assistant", d["metadata"]["name"])
+
+    def test_kustomization_lists_every_manifest(self):
+        # Argo CD prunes: a manifest left out would be deleted from the cluster.
+        on_disk = sorted(os.path.basename(p) for p in glob.glob(os.path.join(K8S, "*.yaml")))
+        on_disk.remove("kustomization.yaml")
+        self.assertEqual(sorted(kustomization()["resources"]), on_disk)
+
+    def test_every_ha_file_is_in_the_configmap(self):
+        files = sorted(os.listdir(os.path.join(K8S, "ha")))
+        self.assertEqual(sorted(configmap()), files)
+        gen = kustomization()["configMapGenerator"][0]
+        self.assertEqual(gen["namespace"], "home-assistant")
+        self.assertNotIn("options", gen)  # the hash suffix is what rolls HA
+
+    def test_the_deployment_mounts_the_generated_configmap(self):
+        # Kustomize rewrites these to the hashed name; they must start as the
+        # generator's name or the rewrite misses them.
+        volumes = find("Deployment", "home-assistant")["spec"]["template"]["spec"]["volumes"]
+        names = {v["name"]: v["configMap"]["name"] for v in volumes if "configMap" in v}
+        self.assertEqual(names, {"yaml": "home-assistant-config", "packages": "home-assistant-config"})
 
     def test_image_is_pinned(self):
         image = find("Deployment", "home-assistant")["spec"]["template"]["spec"]["containers"][0]["image"]

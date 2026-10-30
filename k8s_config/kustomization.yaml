@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Argo CD renders this directory with Kustomize (it auto-detects this file).
+# Its sync prunes, so every manifest is listed here: a new one needs a line.
+
+resources:
+  - namespace.yaml
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+  - podmonitor.yaml
+  - metrics-dashboard.yaml
+
+# Home Assistant's YAML, from git: ha/. The pod mounts configuration.yaml over
+# the volume's copy and the packages read-only into /config/packages. The
+# ConfigMap's name carries a hash of its content and Kustomize writes that
+# name into the Deployment, so a change here rolls HA by itself on the merge
+# (Argo prunes the old ConfigMap). What's set in the UI stays on the volume
+# (pvc.yaml).
+configMapGenerator:
+  - name: home-assistant-config
+    namespace: home-assistant
+    files:
+      - configuration.yaml=ha/configuration.yaml
+      - lcars_panel.yaml=ha/lcars_panel.yaml

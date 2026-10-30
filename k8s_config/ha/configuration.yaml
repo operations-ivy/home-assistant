@@ -1,0 +1,12 @@
+default_config:
+
+homeassistant:
+  packages: !include_dir_named packages
+
+# No http: here. Since 2026.10 HA migrates it to storage once and then
+# ignores it, and a new HTTP config must be confirmed within 5 minutes
+# or it reverts; scripts/setup sets the trusted proxies that way.
+
+# /api/prometheus, scraped with a long-lived token (podmonitor.yaml).
+prometheus:
+  namespace: hass
