@@ -53,6 +53,13 @@ def write_config_dir(path):
                     f.write(data[key["key"]])
 
 
+class _Now:
+    """now() for render(): only its timestamp is used."""
+
+    def __init__(self, ts):
+        self.ts = ts
+
+
 def render(template, **variables):
     from jinja2.sandbox import ImmutableSandboxedEnvironment
 
@@ -128,6 +135,69 @@ class LcarsPanel(unittest.TestCase):
         self.assertEqual([x["action"] for x in a["actions"]],
                          ["input_datetime.set_datetime", "system_log.write", "homeassistant.restart"])
         self.assertNotIn("initial", self.pkg["input_datetime"]["lcars_room_watchdog_last_restart"])
+
+    def test_calendar_watchdog_restarts_at_most_every_2_hours(self):
+        a = self.automation("lcars_calendar_watchdog")
+        self.assertEqual(a["mode"], "single")
+        google, stuck, rate = a["conditions"]
+        self.assertEqual(google["entity_id"], "binary_sensor.google_calendar_api_reachable")
+        self.assertEqual(google["for"], {"minutes": 15})
+        self.assertEqual(stuck["entity_id"], "binary_sensor.calendars_available")
+        self.assertEqual((stuck["state"], stuck["for"]), ("off", {"minutes": 45}))
+        self.assertEqual(rate, self.automation("lcars_bedroom_sensor_watchdog")["conditions"][2])
+        self.assertEqual([x["action"] for x in a["actions"]],
+                         ["input_datetime.set_datetime", "system_log.write", "homeassistant.restart"])
+        self.assertEqual(a["actions"][0]["target"]["entity_id"],
+                         "input_datetime.lcars_calendar_watchdog_last_restart")
+        self.assertNotIn("initial", self.pkg["input_datetime"]["lcars_calendar_watchdog_last_restart"])
+
+    def test_watchdogs_share_the_2_hour_limit(self):
+        rate = self.automation("lcars_calendar_watchdog")["conditions"][2]["value_template"]
+        now = 1_800_000_000
+
+        def allowed(room, calendar):
+            stamps = {"input_datetime.lcars_room_watchdog_last_restart": room,
+                      "input_datetime.lcars_calendar_watchdog_last_restart": calendar}
+            out = render(rate, now=lambda: _Now(now), states=lambda e: stamps[e],
+                         as_timestamp=lambda v, d=None: (v.ts if isinstance(v, _Now) else
+                                                         d if v in ("unknown", None) else float(v)))
+            return out.strip() == "True"
+
+        self.assertTrue(allowed("unknown", "unknown"))  # never restarted
+        self.assertFalse(allowed(now - 3600, "unknown"))
+        self.assertFalse(allowed("unknown", now - 3600))
+        self.assertFalse(allowed(now - 3 * 3600, now - 600))
+        self.assertTrue(allowed(now - 3 * 3600, now - 2.5 * 3600))
+
+    def test_calendars_available_in_home_assistant(self):
+        # HA's own template engine: states.calendar is HA's, not plain Jinja.
+        import asyncio
+        from homeassistant.core import HomeAssistant
+        from homeassistant.helpers.template import Template
+
+        state = self.pkg["template"][0]["binary_sensor"][0]["state"]
+
+        async def available(**calendars):
+            with tempfile.TemporaryDirectory() as d:
+                hass = HomeAssistant(d)
+                for name, value in calendars.items():
+                    hass.states.async_set(f"calendar.{name}", value)
+                hass.states.async_set("sensor.other", "on")
+                out = Template(state, hass).async_render()
+                await hass.async_stop(force=True)
+                return out
+
+        run = asyncio.run
+        self.assertIs(run(available()), False)  # never set up
+        self.assertIs(run(available(a="unavailable", b="unknown")), False)
+        self.assertIs(run(available(a="unavailable", b="off")), True)
+        self.assertIs(run(available(a="on")), True)
+
+    def test_google_check_says_on_or_off(self):
+        check = self.pkg["command_line"][1]["binary_sensor"]
+        self.assertEqual(check["unique_id"], "google_calendar_api_reachable")
+        self.assertTrue(check["command"].endswith("&& echo on || echo off"))
+        self.assertIn("-m 10", check["command"])
 
     def test_panel_reading_needs_up(self):
         check = self.pkg["command_line"][0]["binary_sensor"]

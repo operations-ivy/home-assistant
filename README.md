@@ -36,6 +36,7 @@ thermostat locally over HomeKit (ecobee issues no new cloud API keys since
 | `sensor.bedroom_temperature` / `_humidity` | The bedroom's SHT35 on brick1982, polled from the panel's `/room.json` every minute. Read-only: nothing acts on them. |
 | `binary_sensor.lcars_panel_room_reading` | On while `/room.json` answers with a reading, checked with `curl` outside HA's HTTP client. |
 | automation `lcars_bedroom_sensor_watchdog` | If the panel has had a reading for 15 minutes and `sensor.bedroom_temperature` still has none, restarts HA, at most once every 2 hours (`input_datetime.lcars_room_watchdog_last_restart`). HA started while brick1982 was off on 2026-10-23 and its rest sensors never recovered; `rest.reload` didn't help, a restart did (#9). |
+| automation `lcars_calendar_watchdog` | If Google's Calendar API has answered for 15 minutes (`binary_sensor.google_calendar_api_reachable`, curl outside HA) and `binary_sensor.calendars_available` (any `calendar.*` available) has been off for 45, restarts HA. A Google timeout burst on 2026-10-27 hung the integration for three days; a reload hung too, a restart fixed it. Both watchdogs share one limit: at most one restart every 2 hours. |
 | automation `lcars_panel_unlock_expires` | `unlocked` returns to `normal` after 10 minutes. |
 
 The thermostat must be `climate.thermostat` (rename its entity after pairing,

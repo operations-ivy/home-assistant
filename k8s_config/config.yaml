@@ -61,11 +61,36 @@ data:
           payload_on: "on"
           payload_off: "off"
           scan_interval: 60
+      # Whether Google's Calendar API answers, also outside HA's own client
+      # (its public discovery document: no token needed). The calendar
+      # watchdog below compares it with the calendars.
+      - binary_sensor:
+          name: Google Calendar API reachable
+          unique_id: google_calendar_api_reachable
+          command: curl -sf -o /dev/null -m 10 https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest && echo on || echo off
+          payload_on: "on"
+          payload_off: "off"
+          scan_interval: 300
+
+    template:
+      # On while any calendar is available. Every calendar here is Google's,
+      # so off means the integration is down or stuck, however it got there
+      # (entities unavailable, or never set up after a hung reload). Its
+      # last_changed is how long; it starts again at each HA start.
+      - binary_sensor:
+          - name: Calendars available
+            unique_id: calendars_available
+            state: >-
+              {{ states.calendar | rejectattr('state', 'in', ['unavailable', 'unknown']) | list | length > 0 }}
 
     input_datetime:
       # When the watchdog last restarted HA; restored across restarts.
       lcars_room_watchdog_last_restart:
         name: Bedroom sensor watchdog last restart
+        has_date: true
+        has_time: true
+      lcars_calendar_watchdog_last_restart:
+        name: Calendar watchdog last restart
         has_date: true
         has_time: true
 
@@ -124,9 +149,11 @@ data:
               {% set s = states.sensor.bedroom_temperature %}
               {{ s is none or (s.state in ['unavailable', 'unknown']
                  and now() - s.last_changed > timedelta(minutes=15)) }}
+          # Either watchdog's restart counts: at most one every 2 hours.
           - condition: template
             value_template: >-
-              {{ as_timestamp(now()) - as_timestamp(states('input_datetime.lcars_room_watchdog_last_restart'), 0)
+              {{ as_timestamp(now()) - [as_timestamp(states('input_datetime.lcars_room_watchdog_last_restart'), 0),
+                                        as_timestamp(states('input_datetime.lcars_calendar_watchdog_last_restart'), 0)] | max
                  > 2 * 3600 }}
         actions:
           - action: input_datetime.set_datetime
@@ -141,6 +168,49 @@ data:
               message: >-
                 The panel's /room.json has a reading but sensor.bedroom_temperature
                 is {{ states('sensor.bedroom_temperature') }}: restarting Home Assistant.
+          - action: homeassistant.restart
+
+      # A burst of Google timeouts (2026-10-27) left every Google calendar
+      # unavailable for three days: the integration's sync hung, a reload of
+      # it hung too, and only a restart fixed it. So when Google's API has
+      # answered for 15 minutes and no calendar has been available for 45
+      # (three of their 15-minute polls), restart HA, at most once every 2
+      # hours across both watchdogs.
+      - id: lcars_calendar_watchdog
+        alias: Calendar watchdog
+        mode: single
+        triggers:
+          - trigger: time_pattern
+            minutes: "/5"
+        conditions:
+          - condition: state
+            entity_id: binary_sensor.google_calendar_api_reachable
+            state: "on"
+            for:
+              minutes: 15
+          - condition: state
+            entity_id: binary_sensor.calendars_available
+            state: "off"
+            for:
+              minutes: 45
+          - condition: template
+            value_template: >-
+              {{ as_timestamp(now()) - [as_timestamp(states('input_datetime.lcars_room_watchdog_last_restart'), 0),
+                                        as_timestamp(states('input_datetime.lcars_calendar_watchdog_last_restart'), 0)] | max
+                 > 2 * 3600 }}
+        actions:
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: input_datetime.lcars_calendar_watchdog_last_restart
+            data:
+              timestamp: "{{ now().timestamp() }}"
+          - action: system_log.write
+            data:
+              level: warning
+              logger: lcars_calendar_watchdog
+              message: >-
+                Google's Calendar API answers but no calendar has been available
+                for 45 minutes: restarting Home Assistant.
           - action: homeassistant.restart
 
       - id: lcars_panel_unlock_expires
