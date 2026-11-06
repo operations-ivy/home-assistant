@@ -120,6 +120,17 @@ class Manifests(unittest.TestCase):
         self.assertTrue(pod["hostNetwork"])
         self.assertEqual(pod["dnsPolicy"], "ClusterFirstWithHostNet")
 
+    def test_reaches_the_hosts_bluetooth(self):
+        pod = find("Deployment", "home-assistant")["spec"]["template"]["spec"]
+        container = pod["containers"][0]
+        dbus = next(v for v in pod["volumes"] if v["name"] == "dbus")
+        self.assertEqual(dbus["hostPath"]["path"], "/run/dbus")
+        mount = next(m for m in container["volumeMounts"] if m["name"] == "dbus")
+        self.assertEqual(mount["mountPath"], "/run/dbus")
+        self.assertTrue(mount["readOnly"])
+        caps = container["securityContext"]["capabilities"]["add"]
+        self.assertEqual(set(caps), {"NET_ADMIN", "NET_RAW"})
+
     def test_mounted_keys_exist(self):
         data = configmap()
         for v in find("Deployment", "home-assistant")["spec"]["template"]["spec"]["volumes"]:
