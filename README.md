@@ -69,13 +69,17 @@ Then `scripts/setup` (safe to run again; each step skips what's done):
    and the pod network as trusted proxies, waits for the restart, checks the
    site through Caddy, and only then confirms them.
 6. Renames the ecobee's climate entity to `climate.thermostat`.
-7. Creates two users, **Panel** and **Monitoring** (not administrators,
-   local only, passwords never kept), each with a 10-year token. Panel's
-   goes into brick1982's `~/.config/lcars/env` (the panel's changes show
-   under that name in the logbook); Monitoring's is sealed into
-   brick-k8s-secrets (`home-assistant/`, commit it there) and applied for
-   the PodMonitor. Neither is printed. To replace one, delete the user in HA
-   and run the script again.
+7. Creates three users, **Panel**, **Monitoring** and **Board** (not
+   administrators, local only, passwords never kept), each with a 10-year
+   token. Panel's goes into brick1982's `~/.config/lcars/env` (the panel's
+   changes show under that name in the logbook); Board's into brick9000's
+   `~/.config/brick-status/env` as `BRICK_STATUS_HA_TOKEN` (the front-left
+   button works the Hue lamp, brick-cicd-config#121), restarting
+   brick-status; Monitoring's is sealed into brick-k8s-secrets
+   (`home-assistant/`, commit it there) and applied for the PodMonitor. None
+   is printed. To replace one, delete the user in HA and run the script
+   again. A user that already exists is skipped, so running it again only
+   adds the new ones.
 
 ## Metrics
 
