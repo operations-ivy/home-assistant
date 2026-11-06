@@ -1,6 +1,8 @@
 # One Home Assistant, on brick2000 with its volume. Host networking, because
 # HomeKit (the ecobee) is found and reached over mDNS on the LAN; that also
-# puts the UI on brick2000:8123.
+# puts the UI on brick2000:8123. Bluetooth (the Hue BLE lamp) uses
+# brick2000's own adapter through the host's BlueZ: /run/dbus, and NET_ADMIN +
+# NET_RAW for HA's adapter management and recovery.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -27,6 +29,9 @@ spec:
       - name: home-assistant
         image: ghcr.io/home-assistant/home-assistant:2026.10.1
         imagePullPolicy: IfNotPresent
+        securityContext:
+          capabilities:
+            add: ["NET_ADMIN", "NET_RAW"]
         env:
         - name: TZ
           value: America/New_York
@@ -39,6 +44,9 @@ spec:
         - name: yaml
           mountPath: /config/configuration.yaml
           subPath: configuration.yaml
+          readOnly: true
+        - name: dbus
+          mountPath: /run/dbus
           readOnly: true
         - name: packages
           mountPath: /config/packages
@@ -69,6 +77,10 @@ spec:
             port: 8123
           periodSeconds: 10
       volumes:
+      - name: dbus
+        hostPath:
+          path: /run/dbus
+          type: Directory
       - name: config
         persistentVolumeClaim:
           claimName: home-assistant-config

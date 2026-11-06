@@ -51,9 +51,9 @@ By hand, once:
    `argocd/apps/home-assistant.yaml`); wait for the pod to be Ready.
 2. Open `http://brick2000:8123` and create the owner account. Pick the
    **US customary** unit system: the guardrails are in °F. It also discovers
-   brick2000's Bluetooth adapter: leave it. Nothing here uses Bluetooth,
-   and without `NET_ADMIN` it only logs errors, so `scripts/setup` disables
-   it if it was added (step 8).
+   brick2000's Bluetooth adapter: keep it. The Hue lamp is a Bluetooth bulb
+   (Philips Hue BLE), reached through brick2000's BlueZ: the pod mounts
+   `/run/dbus` and has `NET_ADMIN` + `NET_RAW` for it.
 3. On the ecobee: Main menu → Settings → HomeKit, which shows a pairing code.
    In HA, Settings → Devices → the discovered ecobee (HomeKit Device) →
    enter the code.
@@ -76,10 +76,6 @@ Then `scripts/setup` (safe to run again; each step skips what's done):
    brick-k8s-secrets (`home-assistant/`, commit it there) and applied for
    the PodMonitor. Neither is printed. To replace one, delete the user in HA
    and run the script again.
-8. Disables the Bluetooth integration's config entry, if
-   `default_config` added one for the node's adapter (it logged a traceback
-   every few seconds, 2026-10-23). Nothing here uses Bluetooth, so the pod
-   gets no `NET_ADMIN` for it.
 
 ## Metrics
 
