@@ -10,10 +10,12 @@
 #      let HA restart, check the site through Caddy, and only then confirm
 #      them (otherwise HA reverts in 5 minutes).
 #   2. The ecobee's climate entity becomes climate.thermostat.
-#   3. Panel, Monitoring and Board users, and their tokens: Panel's into
+#   3. Panel, Monitoring, Board and Presto users, and their tokens: Panel's into
 #      brick1982's ~/.config/lcars/env, Board's into brick9000's
 #      ~/.config/brick-status/env, Monitoring's sealed into brick-k8s-secrets
-#      and applied for the PodMonitor. None is ever printed.
+#      and applied for the PodMonitor, Presto's kept on the laptop
+#      (~/.config/home-assistant/presto-token) for the Presto's secrets.py.
+#      None is ever printed.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 token_file=${HA_SETUP_TOKEN_FILE:-$HOME/.config/home-assistant/setup-token}
@@ -76,6 +78,14 @@ put_token() {
 
 if [ -f "$tmp/Panel" ]; then
     put_token Panel brick1982 .config/lcars HA_TOKEN
+fi
+
+if [ -f "$tmp/Presto" ]; then
+    # The Presto is MicroPython with no ssh: its token waits on the laptop for
+    # its secrets.py (HA_TOKEN = "..."), copied over USB (presto README).
+    keep=${PRESTO_TOKEN_FILE:-$HOME/.config/home-assistant/presto-token}
+    (umask 077; mkdir -p "$(dirname "$keep")"; cp "$tmp/Presto" "$keep")
+    echo "setup: Presto's token is in $keep; put it in the Presto's secrets.py as HA_TOKEN"
 fi
 
 if [ -f "$tmp/Board" ]; then
