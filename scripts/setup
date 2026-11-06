@@ -10,9 +10,10 @@
 #      let HA restart, check the site through Caddy, and only then confirm
 #      them (otherwise HA reverts in 5 minutes).
 #   2. The ecobee's climate entity becomes climate.thermostat.
-#   3. Panel and Monitoring users, and their tokens: Panel's into brick1982's
-#      ~/.config/lcars/env, Monitoring's sealed into brick-k8s-secrets and
-#      applied for the PodMonitor. Neither is ever printed.
+#   3. Panel, Monitoring and Board users, and their tokens: Panel's into
+#      brick1982's ~/.config/lcars/env, Board's into brick9000's
+#      ~/.config/brick-status/env, Monitoring's sealed into brick-k8s-secrets
+#      and applied for the PodMonitor. None is ever printed.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 token_file=${HA_SETUP_TOKEN_FILE:-$HOME/.config/home-assistant/setup-token}
@@ -63,13 +64,24 @@ for name, token in json.load(open(os.path.join(tmp, "tokens.json"))).items():
         f.write(token)
 EOF
 
+# put_token USER HOST DIR VAR: replace VAR's line in HOST's DIR/env with
+# USER's token, or add one. The token goes over ssh's stdin, never argv.
+put_token() {
+    { printf '%s=' "$4"; cat "$tmp/$1"; echo; } | ssh "$2" "
+        umask 077; mkdir -p ~/$3; f=~/$3/env; touch \"\$f\"
+        line=\$(cat); grep -v '^$4=' \"\$f\" > \"\$f.new\" || true
+        echo \"\$line\" >> \"\$f.new\"; mv \"\$f.new\" \"\$f\""
+    echo "setup: $1's token is in $2's ~/$3/env"
+}
+
 if [ -f "$tmp/Panel" ]; then
-    # Replace the HA_TOKEN line in the panel's env file, or add one.
-    { printf 'HA_TOKEN='; cat "$tmp/Panel"; echo; } | ssh brick1982 '
-        umask 077; mkdir -p ~/.config/lcars; f=~/.config/lcars/env; touch "$f"
-        line=$(cat); grep -v "^HA_TOKEN=" "$f" > "$f.new" || true
-        echo "$line" >> "$f.new"; mv "$f.new" "$f"'
-    echo "setup: Panel's token is in brick1982's ~/.config/lcars/env"
+    put_token Panel brick1982 .config/lcars HA_TOKEN
+fi
+
+if [ -f "$tmp/Board" ]; then
+    # brick-status reads it at start: restart it there to pick it up.
+    put_token Board brick9000 .config/brick-status BRICK_STATUS_HA_TOKEN
+    ssh brick9000 'systemctl --user restart brick-status' || true
 fi
 
 if [ -f "$tmp/Monitoring" ]; then

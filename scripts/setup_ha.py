@@ -6,7 +6,7 @@ long-lived token comes on stdin, never in argv. One step per run:
                     restarts to try it; scripts/setup checks it, then promotes)
     http-promote    confirm the pending config, so it isn't reverted
     entities        rename the ecobee's climate entity to climate.thermostat
-    users           create the Panel and Monitoring users (not administrators,
+    users           create the Panel, Monitoring and Board users (not administrators,
                     local only) with a long-lived token each, printed as JSON
                     on stdout for scripts/setup to put in place; skipped for a
                     user that already exists
@@ -30,7 +30,8 @@ CLIENT_ID = "http://127.0.0.1:8123/"
 # Traefik on another node reaches this host-network pod masqueraded as that
 # node. HA only takes addresses here, so setup reads them from the cluster.
 THERMOSTAT = "climate.thermostat"
-USERS = {"Panel": "lcars-panel", "Monitoring": "prometheus"}
+# Board: brick9000's front-left button, which works the Hue lamp (brick-status).
+USERS = {"Panel": "lcars-panel", "Monitoring": "prometheus", "Board": "brick9000-board"}
 TOKEN_DAYS = 3650
 
 

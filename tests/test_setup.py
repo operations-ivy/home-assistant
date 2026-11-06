@@ -99,7 +99,7 @@ class Setup(unittest.TestCase):
         r = self.step("users")
         self.assertEqual(r.returncode, 0, r.stderr)
         tokens = json.loads(r.stdout)
-        self.assertEqual(set(tokens), {"Panel", "Monitoring"})
+        self.assertEqual(set(tokens), {"Panel", "Monitoring", "Board"})
         for token in tokens.values():
             self.assertEqual(self.api(token, "/api/"), 200)
             self.assertEqual(self.api(token, "/api/states/sun.sun"), 404)  # a user's read, not a 401
