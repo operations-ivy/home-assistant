@@ -1,0 +1,74 @@
+# The Hue lamp's Bluetooth watchdog (light.lamp: Philips Hue BLE through
+# brick2000's own radio and the host's bluetoothd, over /run/dbus).
+#
+# On 2026-11-11 the link dropped and bluetoothd kept a phantom of it: it
+# said the lamp was connected while the radio had no link, so the bulb
+# never advertised and HA couldn't reach it, through three HA restarts.
+# Only restarting bluetooth.service (then HA, whose Bluetooth scanner
+# breaks when bluetoothd goes away) brought it back.
+#
+# So: when light.lamp has been unavailable for 10 minutes while bluetoothd
+# says it's connected, restart bluetooth.service (systemd over D-Bus; the
+# pod is root on the host's system bus), then HA. A lamp switched off at
+# the wall isn't connected, so it never trips this. At most one restart
+# every 2 hours, shared with lcars_panel.yaml's watchdogs.
+command_line:
+  - sensor:
+      name: Lamp Bluetooth link
+      unique_id: lamp_bluez_link
+      # on, off or missing: bluetoothd's view, by the bulb's Bluetooth name
+      command: python3 /config/bin/bluez_device.py Lamp
+      scan_interval: 60
+      command_timeout: 15
+
+shell_command:
+  restart_bluetooth: >-
+    dbus-send --system --print-reply --dest=org.freedesktop.systemd1 /org/freedesktop/systemd1
+    org.freedesktop.systemd1.Manager.RestartUnit string:bluetooth.service string:replace
+
+input_datetime:
+  lamp_watchdog_last_restart:
+    name: Lamp Bluetooth watchdog last restart
+    has_date: true
+    has_time: true
+
+automation:
+  - id: lamp_bluetooth_watchdog
+    alias: Lamp Bluetooth watchdog
+    mode: single
+    triggers:
+      - trigger: time_pattern
+        minutes: "/5"
+    conditions:
+      - condition: template
+        value_template: >-
+          {% set s = states.light.lamp %}
+          {{ s is none or (s.state in ['unavailable', 'unknown']
+             and now() - s.last_changed > timedelta(minutes=10)) }}
+      - condition: state
+        entity_id: sensor.lamp_bluetooth_link
+        state: "on"
+      # Any watchdog's restart counts: at most one every 2 hours.
+      - condition: template
+        value_template: >-
+          {{ as_timestamp(now()) - [as_timestamp(states('input_datetime.lcars_room_watchdog_last_restart'), 0),
+                                    as_timestamp(states('input_datetime.lcars_calendar_watchdog_last_restart'), 0),
+                                    as_timestamp(states('input_datetime.lamp_watchdog_last_restart'), 0)] | max
+             > 2 * 3600 }}
+    actions:
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.lamp_watchdog_last_restart
+        data:
+          timestamp: "{{ now().timestamp() }}"
+      - action: system_log.write
+        data:
+          level: warning
+          logger: lamp_bluetooth_watchdog
+          message: >-
+            light.lamp is {{ states('light.lamp') }} while bluetoothd says it's
+            connected: restarting bluetooth.service, then Home Assistant.
+      - action: shell_command.restart_bluetooth
+      - delay:
+          seconds: 15
+      - action: homeassistant.restart

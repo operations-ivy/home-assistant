@@ -37,11 +37,24 @@ thermostat locally over HomeKit (ecobee issues no new cloud API keys since
 | `sensor.bedroom_temperature` / `_humidity` | The bedroom's SHT35 on brick1982, polled from the panel's `/room.json` every minute. Read-only: nothing acts on them. |
 | `binary_sensor.lcars_panel_room_reading` | On while `/room.json` answers with a reading, checked with `curl` outside HA's HTTP client. |
 | automation `lcars_bedroom_sensor_watchdog` | If the panel has had a reading for 15 minutes and `sensor.bedroom_temperature` still has none, restarts HA, at most once every 2 hours (`input_datetime.lcars_room_watchdog_last_restart`). HA started while brick1982 was off on 2026-10-23 and its rest sensors never recovered; `rest.reload` didn't help, a restart did (#9). |
-| automation `lcars_calendar_watchdog` | If Google's Calendar API has answered for 15 minutes (`binary_sensor.google_calendar_api_reachable`, curl outside HA) and `binary_sensor.calendars_available` (any `calendar.*` available) has been off for 45, restarts HA. A Google timeout burst on 2026-10-27 hung the integration for three days; a reload hung too, a restart fixed it. Both watchdogs share one limit: at most one restart every 2 hours. |
+| automation `lcars_calendar_watchdog` | If Google's Calendar API has answered for 15 minutes (`binary_sensor.google_calendar_api_reachable`, curl outside HA) and `binary_sensor.calendars_available` (any `calendar.*` available) has been off for 45, restarts HA. A Google timeout burst on 2026-10-27 hung the integration for three days; a reload hung too, a restart fixed it. All three watchdogs (with `lamp.yaml`'s) share one limit: at most one restart every 2 hours. |
 | automation `lcars_panel_unlock_expires` | `unlocked` returns to `normal` after 10 minutes. |
 
 The thermostat must be `climate.thermostat` (rename its entity after pairing,
 below).
+
+## The lamp's Bluetooth watchdog
+
+`k8s_config/ha/lamp.yaml`: `light.lamp` is a Hue Bluetooth bulb on
+brick2000's own radio, through the host's bluetoothd (`/run/dbus`). On
+2026-11-11 a dropped link left bluetoothd saying the lamp was connected while
+the radio had none, so the bulb never advertised and HA couldn't reach it,
+through three HA restarts; restarting `bluetooth.service`, then HA, fixed it.
+
+| Entity | What |
+| --- | --- |
+| `sensor.lamp_bluetooth_link` | bluetoothd's view of the lamp: `on`, `off` or `missing`, every minute (`bin/bluez_device.py`, by its Bluetooth name). |
+| automation `lamp_bluetooth_watchdog` | If `light.lamp` has been unavailable for 10 minutes while that says `on`, restarts `bluetooth.service` (`shell_command.restart_bluetooth`: systemd over D-Bus; the pod is root on the host's system bus), then HA. A lamp switched off at the wall isn't connected, so it never trips this. Shares the 2-hour limit with the panel's watchdogs (`input_datetime.lamp_watchdog_last_restart`). |
 
 ## Outside
 
