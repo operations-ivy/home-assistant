@@ -49,7 +49,9 @@ below).
 `sensor.outside_humidity`, the National Weather Service's nearest station
 (api.weather.gov, free, no key), every 10 minutes. The station
 (`sensor.nws_station`) is looked up hourly from HA's own home location, so no
-coordinates are in this repo. Read-only; the dashboard's Outside comes from here.
+coordinates are in this repo; on a start, automation `nws_outside_after_station`
+fetches the observation again once the station is known. Read-only (the
+automation only refreshes that sensor); the dashboard's Outside comes from here.
 
 ## First setup
 

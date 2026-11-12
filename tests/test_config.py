@@ -301,7 +301,10 @@ class PrestoRoom(unittest.TestCase):
     def test_unavailable_while_its_reading_is_stale(self):
         for sensor in self.sensors:
             with self.subTest(sensor=sensor["name"]):
-                self.assertEqual(sensor["availability"], "{{ value_json.up | default(false) }}")
+                for doc, want in (({"up": True}, True), ({"up": False}, False), ({}, False)):
+                    self.assertIs(ha_render(sensor["availability"], value_json=doc), want)
+                # a failed fetch: no value_json at all, and no template error
+                self.assertIs(ha_render(sensor["availability"]), False)
 
     def test_temperature_is_named_as_presto_feed_shows_it(self):
         # presto-feed strips " temperature": PRESTO, which the Presto leaves out
@@ -367,10 +370,18 @@ class Outside(unittest.TestCase):
         self.assertIs(ha_render(t["availability"], value_json=doc), True)
 
     def test_unavailable_without_any_value(self):
-        for doc in ({"features": [observation(None, None)]}, {"features": []}, {}):
-            for sensor in self.sensors.values():
+        station = self.stations["sensor"][0]
+        for doc in ({"features": [observation(None, None)]}, {"features": []}, {}, None):
+            for sensor in [*self.sensors.values(), *([] if doc and doc.get("features") else [station])]:
                 with self.subTest(doc=doc, sensor=sensor["name"]):
-                    self.assertIs(ha_render(sensor["availability"], value_json=doc), False)
+                    got = ha_render(sensor["availability"], **({} if doc is None else {"value_json": doc}))
+                    self.assertIs(got, False)
+
+    def test_observation_is_fetched_again_once_the_station_is_known(self):
+        (auto,) = self.pkg["automation"]
+        self.assertEqual(auto["triggers"][0]["entity_id"], "sensor.nws_station")
+        self.assertEqual(auto["actions"], [{"action": "homeassistant.update_entity",
+                                            "target": {"entity_id": "sensor.outside_temperature"}}])
 
     def test_named_so_presto_feed_keeps_it_off_the_rooms(self):
         # presto-feed's OUTDOOR pattern (outdoor|outside|exterior|weather) skips it.
@@ -381,8 +392,10 @@ class Outside(unittest.TestCase):
         for rest in self.pkg["rest"]:
             self.assertIn("User-Agent", rest["headers"])
 
-    def test_only_sensors_no_automations_or_services(self):
-        self.assertEqual(set(self.pkg), {"rest"})
+    def test_reads_only_nothing_in_the_house_is_changed(self):
+        self.assertEqual(set(self.pkg), {"rest", "automation"})
+        actions = [a["action"] for auto in self.pkg["automation"] for a in auto["actions"]]
+        self.assertEqual(actions, ["homeassistant.update_entity"])
 
 
 if __name__ == "__main__":

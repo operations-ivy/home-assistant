@@ -7,7 +7,10 @@
 # lookup heals itself. The observation is the newest of the station's last
 # five that has a value (NWS sometimes publishes one without a temperature).
 # "Outside temperature" is a name presto-feed leaves off the Presto's rooms
-# (its OUTDOOR pattern).
+# (its OUTDOOR pattern). Both lookups run at once on a start, before the
+# station is known, so the automation below fetches the observation again
+# as soon as the station arrives instead of 10 minutes later. Availability
+# checks value_json first: a failed fetch has none.
 rest:
   - resource_template: >-
       https://api.weather.gov/points/{{ state_attr('zone.home', 'latitude') | round(4) }},{{
@@ -20,7 +23,7 @@ rest:
       - name: NWS station
         unique_id: nws_station
         value_template: "{{ value_json.features[0].properties.stationIdentifier }}"
-        availability: "{{ value_json.features | default([]) | count > 0 }}"
+        availability: "{{ value_json is defined and value_json.features | default([]) | count > 0 }}"
   - resource_template: >-
       https://api.weather.gov/stations/{{ states('sensor.nws_station') }}/observations?limit=5
     headers:
@@ -33,7 +36,7 @@ rest:
         value_template: >-
           {{ value_json.features | map(attribute='properties.temperature.value') | select('number') | first }}
         availability: >-
-          {{ value_json.features | default([]) | map(attribute='properties.temperature.value') | select('number') | list | count > 0 }}
+          {{ value_json is defined and value_json.features | default([]) | map(attribute='properties.temperature.value') | select('number') | list | count > 0 }}
         device_class: temperature
         state_class: measurement
         unit_of_measurement: "°C"
@@ -42,7 +45,23 @@ rest:
         value_template: >-
           {{ value_json.features | map(attribute='properties.relativeHumidity.value') | select('number') | first | round(0) }}
         availability: >-
-          {{ value_json.features | default([]) | map(attribute='properties.relativeHumidity.value') | select('number') | list | count > 0 }}
+          {{ value_json is defined and value_json.features | default([]) | map(attribute='properties.relativeHumidity.value') | select('number') | list | count > 0 }}
         device_class: humidity
         state_class: measurement
         unit_of_measurement: "%"
+
+automation:
+  - id: nws_outside_after_station
+    alias: Outside, once the NWS station is known
+    description: Fetches the observation again when sensor.nws_station changes (on a start, it was unknown at the first fetch).
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: sensor.nws_station
+    conditions:
+      - condition: template
+        value_template: "{{ trigger.to_state.state not in ('unknown', 'unavailable') }}"
+    actions:
+      - action: homeassistant.update_entity
+        target:
+          entity_id: sensor.outside_temperature
