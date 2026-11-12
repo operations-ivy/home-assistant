@@ -2,6 +2,7 @@
 (scripts/test), so its own YAML loader, templates and check_config are the
 ones under test.
 """
+import asyncio
 import glob
 import os
 import shutil
@@ -302,7 +303,8 @@ class PrestoRoom(unittest.TestCase):
         for sensor in self.sensors:
             with self.subTest(sensor=sensor["name"]):
                 for doc, want in (({"up": True}, True), ({"up": False}, False), ({}, False)):
-                    self.assertIs(ha_render(sensor["availability"], value_json=doc), want)
+                    with self.subTest(doc=doc):
+                        self.assertIs(ha_render(sensor["availability"], value_json=doc), want)
                 # a failed fetch: no value_json at all, and no template error
                 self.assertIs(ha_render(sensor["availability"]), False)
 
@@ -318,7 +320,7 @@ class PrestoRoom(unittest.TestCase):
 
 def ha_render(template, home=None, states=None, **variables):
     """A template through Home Assistant's own engine (zone.home, states(), round)."""
-    import asyncio
+    # Imported here, like the calendar test: the module still loads outside the HA image.
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.template import Template
 
@@ -372,10 +374,13 @@ class Outside(unittest.TestCase):
     def test_unavailable_without_any_value(self):
         station = self.stations["sensor"][0]
         for doc in ({"features": [observation(None, None)]}, {"features": []}, {}, None):
-            for sensor in [*self.sensors.values(), *([] if doc and doc.get("features") else [station])]:
+            variables = {} if doc is None else {"value_json": doc}
+            sensors = list(self.sensors.values())
+            if not (doc and doc.get("features")):  # the station is only about having features
+                sensors.append(station)
+            for sensor in sensors:
                 with self.subTest(doc=doc, sensor=sensor["name"]):
-                    got = ha_render(sensor["availability"], **({} if doc is None else {"value_json": doc}))
-                    self.assertIs(got, False)
+                    self.assertIs(ha_render(sensor["availability"], **variables), False)
 
     def test_observation_is_fetched_again_once_the_station_is_known(self):
         (auto,) = self.pkg["automation"]
@@ -397,7 +402,7 @@ class Outside(unittest.TestCase):
         for rest in self.pkg["rest"]:
             self.assertIn("User-Agent", rest["headers"])
 
-    def test_reads_only_nothing_in_the_house_is_changed(self):
+    def test_only_refreshes_its_own_sensor(self):
         self.assertEqual(set(self.pkg), {"rest", "automation"})
         actions = [a["action"] for auto in self.pkg["automation"] for a in auto["actions"]]
         self.assertEqual(actions, ["homeassistant.update_entity"])

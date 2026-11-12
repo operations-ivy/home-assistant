@@ -71,6 +71,7 @@ stat("Mode", "What the ecobee is set to.", f'max by (mode) (hass_climate_mode{{{
 stat("Doing now", "What the ecobee is doing.", f'max by (action) (hass_climate_action{{{TH}}}) == 1', 16, 1,
      legend="{{action}}", text="name")
 OUTSIDE = 'max(hass_sensor_temperature_celsius{entity="sensor.outside_temperature"})'
+OUTSIDE_HUMIDITY = 'max(hass_sensor_humidity_percent{entity="sensor.outside_humidity"})'
 stat("Outside", "The National Weather Service's nearest station (Home Assistant's weather.yaml).",
      F(OUTSIDE), 20, 1, "fahrenheit", decimals=1)
 
@@ -96,7 +97,7 @@ series("Humidity", "Relative humidity: the ecobee's (downstairs), the bedroom's 
        [('max(hass_sensor_humidity_percent{entity="sensor.my_ecobee_current_humidity"})', "Ecobee"),
         ("lcars_room_humidity_percent", "Bedroom"),
         ("presto_room_humidity_percent", "Presto"),
-        ('max(hass_sensor_humidity_percent{entity="sensor.outside_humidity"})', "Outside")],
+        (OUTSIDE_HUMIDITY, "Outside")],
        12, 19, 12, 5, "percent", 0)
 
 row("Home Assistant", 24)
