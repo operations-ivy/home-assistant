@@ -313,5 +313,77 @@ class PrestoRoom(unittest.TestCase):
         self.assertEqual(set(self.pkg), {"rest"})
 
 
+def ha_render(template, home=None, states=None, **variables):
+    """A template through Home Assistant's own engine (zone.home, states(), round)."""
+    import asyncio
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.template import Template
+
+    async def go():
+        with tempfile.TemporaryDirectory() as d:
+            hass = HomeAssistant(d)
+            if home:
+                hass.states.async_set("zone.home", "0", {"latitude": home[0], "longitude": home[1]})
+            for entity, value in (states or {}).items():
+                hass.states.async_set(entity, value)
+            try:
+                return Template(template, hass).async_render(variables)
+            finally:
+                await hass.async_stop(force=True)
+
+    return asyncio.run(go())
+
+
+def observation(temperature, humidity):
+    return {"properties": {"temperature": {"value": temperature}, "relativeHumidity": {"value": humidity}}}
+
+
+class Outside(unittest.TestCase):
+    """The National Weather Service's nearest station, for the dashboard's Outside."""
+
+    def setUp(self):
+        self.pkg = yaml.load(configmap()["weather.yaml"], Loader=_Loader)
+        self.stations, self.obs = self.pkg["rest"]
+        self.sensors = {s["name"]: s for s in self.obs["sensor"]}
+
+    def test_station_comes_from_home_assistants_home_not_this_repo(self):
+        url = ha_render(self.stations["resource_template"], home=(38.897712345, -77.036512345))
+        self.assertEqual(url, "https://api.weather.gov/points/38.8977,-77.0365/stations")
+        station = self.stations["sensor"][0]
+        doc = {"features": [{"properties": {"stationIdentifier": "KDCA"}}]}
+        self.assertEqual(ha_render(station["value_template"], value_json=doc), "KDCA")
+        self.assertIs(ha_render(station["availability"], value_json={"features": []}), False)
+        self.assertEqual(self.stations["scan_interval"], 3600)  # a failed lookup heals within the hour
+
+    def test_observations_from_the_station(self):
+        url = ha_render(self.obs["resource_template"], states={"sensor.nws_station": "KDCA"})
+        self.assertEqual(url, "https://api.weather.gov/stations/KDCA/observations?limit=5")
+
+    def test_newest_observation_with_a_value(self):
+        doc = {"features": [observation(None, None), observation(13.3, 86.53), observation(12.0, 93.6)]}
+        t, rh = self.sensors["Outside temperature"], self.sensors["Outside humidity"]
+        self.assertEqual(ha_render(t["value_template"], value_json=doc), 13.3)
+        self.assertEqual(ha_render(rh["value_template"], value_json=doc), 87)
+        self.assertIs(ha_render(t["availability"], value_json=doc), True)
+
+    def test_unavailable_without_any_value(self):
+        for doc in ({"features": [observation(None, None)]}, {"features": []}, {}):
+            for sensor in self.sensors.values():
+                with self.subTest(doc=doc, sensor=sensor["name"]):
+                    self.assertIs(ha_render(sensor["availability"], value_json=doc), False)
+
+    def test_named_so_presto_feed_keeps_it_off_the_rooms(self):
+        # presto-feed's OUTDOOR pattern (outdoor|outside|exterior|weather) skips it.
+        self.assertIn("Outside temperature", self.sensors)
+        self.assertEqual(self.sensors["Outside temperature"]["unit_of_measurement"], "°C")
+
+    def test_names_itself_to_the_nws(self):
+        for rest in self.pkg["rest"]:
+            self.assertIn("User-Agent", rest["headers"])
+
+    def test_only_sensors_no_automations_or_services(self):
+        self.assertEqual(set(self.pkg), {"rest"})
+
+
 if __name__ == "__main__":
     unittest.main()

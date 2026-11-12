@@ -98,3 +98,5 @@ spec:
             path: lcars_panel.yaml
           - key: presto.yaml
             path: presto.yaml
+          - key: weather.yaml
+            path: weather.yaml

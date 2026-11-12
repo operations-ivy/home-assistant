@@ -70,13 +70,14 @@ stat("Mode", "What the ecobee is set to.", f'max by (mode) (hass_climate_mode{{{
      legend="{{mode}}", text="name")
 stat("Doing now", "What the ecobee is doing.", f'max by (action) (hass_climate_action{{{TH}}}) == 1', 16, 1,
      legend="{{action}}", text="name")
-stat("Outside", "From the LCARS panel's weather (National Weather Service, or a backup).",
-     "lcars_weather_temperature_fahrenheit", 20, 1, "fahrenheit", decimals=1)
+OUTSIDE = 'max(hass_sensor_temperature_celsius{entity="sensor.outside_temperature"})'
+stat("Outside", "The National Weather Service's nearest station (Home Assistant's weather.yaml).",
+     F(OUTSIDE), 20, 1, "fahrenheit", decimals=1)
 
 series("Temperatures", "Inside (the ecobee, downstairs), the setpoint, outside, the bedroom (brick1982's sensor) and the Presto's room, all in °F.",
        [(F(f"max(hass_climate_current_temperature_celsius{{{TH}}})"), "Inside"),
         (F(f"max(hass_climate_target_temperature_celsius{{{TH}}})"), "Target"),
-        ("lcars_weather_temperature_fahrenheit", "Outside"),
+        (F(OUTSIDE), "Outside"),
         ("lcars_room_temperature_fahrenheit", "Bedroom"),
         ("presto_room_temperature_fahrenheit", "Presto")], 0, 5, 16, 9, "fahrenheit", 1, minzero=False)
 stat("Cooling, 24h", "Hours the ecobee spent cooling in the last 24 hours.",
@@ -91,10 +92,11 @@ panels[-1]["gridPos"]["h"] = 5
 panels[-2]["gridPos"]["h"] = 5
 timeline("What it's doing", "The ecobee's activity over time.", ACTIONS, "hass_climate_action", "action", 0, 14, 24, 5)
 timeline("Mode", "What the ecobee was set to.", MODES, "hass_climate_mode", "mode", 0, 19, 12, 5)
-series("Humidity", "Indoor relative humidity: the ecobee's (downstairs), the bedroom's (brick1982's sensor) and the Presto's room.",
+series("Humidity", "Relative humidity: the ecobee's (downstairs), the bedroom's (brick1982's sensor), the Presto's room and outside (the National Weather Service).",
        [('max(hass_sensor_humidity_percent{entity="sensor.my_ecobee_current_humidity"})', "Ecobee"),
         ("lcars_room_humidity_percent", "Bedroom"),
-        ("presto_room_humidity_percent", "Presto")],
+        ("presto_room_humidity_percent", "Presto"),
+        ('max(hass_sensor_humidity_percent{entity="sensor.outside_humidity"})', "Outside")],
        12, 19, 12, 5, "percent", 0)
 
 row("Home Assistant", 24)

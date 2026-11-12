@@ -1,0 +1,48 @@
+# Outside: the National Weather Service's nearest station (api.weather.gov,
+# free, no key; US only), standing in for the LCARS panel's weather while
+# brick1982 is off. Read-only, like presto.yaml.
+#
+# No coordinates here (this repo is public): the station is looked up from
+# Home Assistant's own home location (zone.home), hourly, so a failed first
+# lookup heals itself. The observation is the newest of the station's last
+# five that has a value (NWS sometimes publishes one without a temperature).
+# "Outside temperature" is a name presto-feed leaves off the Presto's rooms
+# (its OUTDOOR pattern).
+rest:
+  - resource_template: >-
+      https://api.weather.gov/points/{{ state_attr('zone.home', 'latitude') | round(4) }},{{
+      state_attr('zone.home', 'longitude') | round(4) }}/stations
+    headers:
+      User-Agent: (homelab weather sensor)
+    scan_interval: 3600
+    timeout: 30
+    sensor:
+      - name: NWS station
+        unique_id: nws_station
+        value_template: "{{ value_json.features[0].properties.stationIdentifier }}"
+        availability: "{{ value_json.features | default([]) | count > 0 }}"
+  - resource_template: >-
+      https://api.weather.gov/stations/{{ states('sensor.nws_station') }}/observations?limit=5
+    headers:
+      User-Agent: (homelab weather sensor)
+    scan_interval: 600
+    timeout: 30
+    sensor:
+      - name: Outside temperature
+        unique_id: nws_outside_temperature
+        value_template: >-
+          {{ value_json.features | map(attribute='properties.temperature.value') | select('number') | first }}
+        availability: >-
+          {{ value_json.features | default([]) | map(attribute='properties.temperature.value') | select('number') | list | count > 0 }}
+        device_class: temperature
+        state_class: measurement
+        unit_of_measurement: "°C"
+      - name: Outside humidity
+        unique_id: nws_outside_humidity
+        value_template: >-
+          {{ value_json.features | map(attribute='properties.relativeHumidity.value') | select('number') | first | round(0) }}
+        availability: >-
+          {{ value_json.features | default([]) | map(attribute='properties.relativeHumidity.value') | select('number') | list | count > 0 }}
+        device_class: humidity
+        state_class: measurement
+        unit_of_measurement: "%"

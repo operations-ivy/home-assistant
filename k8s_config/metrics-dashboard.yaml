@@ -377,7 +377,7 @@ data:
         {
           "type": "stat",
           "title": "Outside",
-          "description": "From the LCARS panel's weather (National Weather Service, or a backup).",
+          "description": "The National Weather Service's nearest station (Home Assistant's weather.yaml).",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -389,7 +389,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "lcars_weather_temperature_fahrenheit",
+              "expr": "max(hass_sensor_temperature_celsius{entity=\"sensor.outside_temperature\"}) * 9 / 5 + 32",
               "legendFormat": "",
               "instant": true
             }
@@ -469,7 +469,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "lcars_weather_temperature_fahrenheit",
+              "expr": "max(hass_sensor_temperature_celsius{entity=\"sensor.outside_temperature\"}) * 9 / 5 + 32",
               "legendFormat": "Outside"
             },
             {
@@ -971,7 +971,7 @@ data:
         {
           "type": "timeseries",
           "title": "Humidity",
-          "description": "Indoor relative humidity: the ecobee's (downstairs), the bedroom's (brick1982's sensor) and the Presto's room.",
+          "description": "Relative humidity: the ecobee's (downstairs), the bedroom's (brick1982's sensor), the Presto's room and outside (the National Weather Service).",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -1003,6 +1003,15 @@ data:
               },
               "expr": "presto_room_humidity_percent",
               "legendFormat": "Presto"
+            },
+            {
+              "refId": "D",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max(hass_sensor_humidity_percent{entity=\"sensor.outside_humidity\"})",
+              "legendFormat": "Outside"
             }
           ],
           "fieldConfig": {
