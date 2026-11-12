@@ -1,0 +1,40 @@
+# The Presto's room sensor (operations-ivy/presto#8): the desk display's
+# BME280 and LTR-559, read from its /room.json on the LAN. Read-only, like
+# the bedroom's (lcars_panel.yaml): nothing here changes the thermostat.
+# "up" is false and the values null once its last reading is 5 minutes old,
+# so these go unavailable instead of holding a stale number. "Presto
+# temperature" is the name presto-feed shows as PRESTO, and the Presto
+# leaves this copy out while it has its own reading.
+rest:
+  - resource: http://presto:8767/room.json
+    scan_interval: 60
+    timeout: 10
+    sensor:
+      - name: Presto temperature
+        unique_id: presto_room_temperature
+        value_template: "{{ value_json.temperature_f }}"
+        availability: "{{ value_json.up | default(false) }}"
+        device_class: temperature
+        state_class: measurement
+        unit_of_measurement: "°F"
+      - name: Presto humidity
+        unique_id: presto_room_humidity
+        value_template: "{{ value_json.humidity }}"
+        availability: "{{ value_json.up | default(false) }}"
+        device_class: humidity
+        state_class: measurement
+        unit_of_measurement: "%"
+      - name: Presto pressure
+        unique_id: presto_room_pressure
+        value_template: "{{ value_json.pressure_hpa }}"
+        availability: "{{ value_json.up | default(false) }}"
+        device_class: atmospheric_pressure
+        state_class: measurement
+        unit_of_measurement: "hPa"
+      - name: Presto light
+        unique_id: presto_room_light
+        value_template: "{{ value_json.lux }}"
+        availability: "{{ value_json.up | default(false) }}"
+        device_class: illuminance
+        state_class: measurement
+        unit_of_measurement: "lx"
