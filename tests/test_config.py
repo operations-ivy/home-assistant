@@ -3,12 +3,15 @@
 ones under test.
 """
 import asyncio
+import datetime
 import glob
+import importlib.util
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 
 import yaml
@@ -94,7 +97,10 @@ class Manifests(unittest.TestCase):
         self.assertEqual(sorted(kustomization()["resources"]), on_disk)
 
     def test_every_ha_file_is_in_the_configmap(self):
-        files = sorted(os.listdir(os.path.join(K8S, "ha")))
+        # ha/ and its bin/ (scripts the pod runs), each under its own name
+        ha = os.path.join(K8S, "ha")
+        files = sorted(os.path.basename(p) for p in glob.glob(os.path.join(ha, "**", "*"), recursive=True)
+                       if os.path.isfile(p))
         self.assertEqual(sorted(configmap()), files)
         gen = kustomization()["configMapGenerator"][0]
         self.assertEqual(gen["namespace"], "home-assistant")
@@ -105,7 +111,8 @@ class Manifests(unittest.TestCase):
         # generator's name or the rewrite misses them.
         volumes = find("Deployment", "home-assistant")["spec"]["template"]["spec"]["volumes"]
         names = {v["name"]: v["configMap"]["name"] for v in volumes if "configMap" in v}
-        self.assertEqual(names, {"yaml": "home-assistant-config", "packages": "home-assistant-config"})
+        self.assertEqual(names, {"yaml": "home-assistant-config", "packages": "home-assistant-config",
+                                 "bin": "home-assistant-config"})
 
     def test_image_is_pinned(self):
         image = find("Deployment", "home-assistant")["spec"]["template"]["spec"]["containers"][0]["image"]
@@ -199,9 +206,10 @@ class LcarsPanel(unittest.TestCase):
         rate = self.automation("lcars_calendar_watchdog")["conditions"][2]["value_template"]
         now = 1_800_000_000
 
-        def allowed(room, calendar):
+        def allowed(room, calendar, lamp="unknown"):
             stamps = {"input_datetime.lcars_room_watchdog_last_restart": room,
-                      "input_datetime.lcars_calendar_watchdog_last_restart": calendar}
+                      "input_datetime.lcars_calendar_watchdog_last_restart": calendar,
+                      "input_datetime.lamp_watchdog_last_restart": lamp}
             out = render(rate, now=lambda: _Now(now), states=lambda e: stamps[e],
                          as_timestamp=lambda v, d=None: (v.ts if isinstance(v, _Now) else
                                                          d if v in ("unknown", None) else float(v)))
@@ -210,6 +218,7 @@ class LcarsPanel(unittest.TestCase):
         self.assertTrue(allowed("unknown", "unknown"))  # never restarted
         self.assertFalse(allowed(now - 3600, "unknown"))
         self.assertFalse(allowed("unknown", now - 3600))
+        self.assertFalse(allowed("unknown", "unknown", now - 3600))  # lamp.yaml's restart counts too
         self.assertFalse(allowed(now - 3 * 3600, now - 600))
         self.assertTrue(allowed(now - 3 * 3600, now - 2.5 * 3600))
 
@@ -406,6 +415,94 @@ class Outside(unittest.TestCase):
         self.assertEqual(set(self.pkg), {"rest", "automation"})
         actions = [a["action"] for auto in self.pkg["automation"] for a in auto["actions"]]
         self.assertEqual(actions, ["homeassistant.update_entity"])
+
+
+def bluez_device():
+    """ha/bin/bluez_device.py, imported from its file (it isn't a package)."""
+    spec = importlib.util.spec_from_file_location("bluez_device", os.path.join(K8S, "ha", "bin", "bluez_device.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class _Variant:
+    """dbus_fast's Variant: the value is in .value."""
+
+    def __init__(self, value):
+        self.value = value
+
+
+class LampWatchdog(unittest.TestCase):
+    """Restart bluetoothd, then HA, when it holds a phantom link to the lamp (2026-11-11)."""
+
+    def setUp(self):
+        self.pkg = yaml.load(configmap()["lamp.yaml"], Loader=_Loader)
+        (self.auto,) = self.pkg["automation"]
+
+    def test_bluez_device_by_name(self):
+        connected = bluez_device().connected
+        objects = {
+            "/org/bluez/hci0": {"org.bluez.Adapter1": {"Powered": _Variant(True)}},
+            "/org/bluez/hci0/dev_1": {"org.bluez.Device1": {"Name": _Variant("Other"), "Connected": _Variant(True)}},
+            "/org/bluez/hci0/dev_2": {"org.bluez.Device1": {"Name": _Variant("Lamp"), "Connected": _Variant(True)}},
+        }
+        self.assertEqual(connected(objects, "Lamp"), "on")
+        objects["/org/bluez/hci0/dev_2"]["org.bluez.Device1"]["Connected"] = _Variant(False)
+        self.assertEqual(connected(objects, "Lamp"), "off")
+        self.assertEqual(connected(objects, "Nothing"), "missing")
+        alias_only = {"/d": {"org.bluez.Device1": {"Alias": _Variant("Lamp"), "Connected": _Variant(True)}}}
+        self.assertEqual(connected(alias_only, "Lamp"), "on")
+
+    def test_the_sensor_runs_the_mounted_script(self):
+        (sensor,) = self.pkg["command_line"]
+        self.assertEqual(sensor["sensor"]["command"], "python3 /config/bin/bluez_device.py Lamp")
+        pod = find("Deployment", "home-assistant")["spec"]["template"]["spec"]
+        mount = next(m for m in pod["containers"][0]["volumeMounts"] if m["name"] == "bin")
+        self.assertEqual(mount["mountPath"], "/config/bin")
+        self.assertTrue(mount["readOnly"])
+
+    def lamp_down(self, state, minutes):
+        now = datetime.datetime(2026, 11, 12, 12, 0, tzinfo=datetime.timezone.utc)
+        lamp = None if state is None else types.SimpleNamespace(
+            state=state, last_changed=now - datetime.timedelta(minutes=minutes))
+        states = types.SimpleNamespace(light=types.SimpleNamespace(lamp=lamp))
+        out = render(self.auto["conditions"][0]["value_template"], states=states, now=lambda: now,
+                     timedelta=datetime.timedelta)
+        return out.strip() == "True"
+
+    def test_only_after_10_minutes_unavailable(self):
+        self.assertTrue(self.lamp_down("unavailable", 11))
+        self.assertTrue(self.lamp_down(None, 0))  # never set up
+        self.assertFalse(self.lamp_down("unavailable", 5))
+        self.assertFalse(self.lamp_down("on", 60))
+        self.assertFalse(self.lamp_down("off", 60))
+
+    def test_only_with_a_phantom_link(self):
+        # A lamp switched off at the wall isn't connected: no restart for that.
+        self.assertIn({"condition": "state", "entity_id": "sensor.lamp_bluetooth_link", "state": "on"},
+                      self.auto["conditions"])
+
+    def test_restarts_bluetooth_then_home_assistant(self):
+        actions = [a.get("action", "delay") for a in self.auto["actions"]]
+        self.assertEqual(actions, ["input_datetime.set_datetime", "system_log.write",
+                                   "shell_command.restart_bluetooth", "delay", "homeassistant.restart"])
+        command = self.pkg["shell_command"]["restart_bluetooth"]
+        self.assertIn("org.freedesktop.systemd1.Manager.RestartUnit string:bluetooth.service", command)
+        self.assertEqual(set(self.pkg["shell_command"]), {"restart_bluetooth"})
+
+    def test_every_watchdog_shares_the_2_hour_limit(self):
+        stamps = ["input_datetime.lcars_room_watchdog_last_restart",
+                  "input_datetime.lcars_calendar_watchdog_last_restart",
+                  "input_datetime.lamp_watchdog_last_restart"]
+        panel = yaml.load(configmap()["lcars_panel.yaml"], Loader=_Loader)
+        autos = [a for a in panel["automation"] if a["id"].endswith("_watchdog")] + [self.auto]
+        self.assertEqual(len(autos), 3)
+        for auto in autos:
+            with self.subTest(auto=auto["id"]):
+                limit = next(c["value_template"] for c in auto["conditions"]
+                             if "2 * 3600" in c.get("value_template", ""))
+                for stamp in stamps:
+                    self.assertIn(stamp, limit)
 
 
 if __name__ == "__main__":

@@ -51,6 +51,9 @@ spec:
         - name: packages
           mountPath: /config/packages
           readOnly: true
+        - name: bin
+          mountPath: /config/bin
+          readOnly: true
         resources:
           requests:
             cpu: 200m
@@ -100,3 +103,11 @@ spec:
             path: presto.yaml
           - key: weather.yaml
             path: weather.yaml
+          - key: lamp.yaml
+            path: lamp.yaml
+      - name: bin
+        configMap:
+          name: home-assistant-config
+          items:
+          - key: bluez_device.py
+            path: bluez_device.py

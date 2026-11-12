@@ -27,3 +27,5 @@ configMapGenerator:
       - lcars_panel.yaml=ha/lcars_panel.yaml
       - presto.yaml=ha/presto.yaml
       - weather.yaml=ha/weather.yaml
+      - lamp.yaml=ha/lamp.yaml
+      - bluez_device.py=ha/bin/bluez_device.py
