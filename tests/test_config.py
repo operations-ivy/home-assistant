@@ -285,5 +285,29 @@ class CheckConfig(unittest.TestCase):
             self.assertNotIn("Invalid config", r.stdout)
 
 
+class PrestoRoom(unittest.TestCase):
+    """The Presto's /room.json (presto#8), read like the bedroom's."""
+
+    def setUp(self):
+        self.pkg = yaml.load(configmap()["presto.yaml"], Loader=_Loader)
+
+    def test_reads_the_presto_on_the_lan_every_minute(self):
+        (rest,) = self.pkg["rest"]
+        self.assertEqual(rest["resource"], "http://presto:8767/room.json")
+        self.assertEqual(rest["scan_interval"], 60)
+
+    def test_unavailable_while_its_reading_is_stale(self):
+        for sensor in self.pkg["rest"][0]["sensor"]:
+            self.assertEqual(sensor["availability"], "{{ value_json.up | default(false) }}")
+
+    def test_temperature_is_named_as_presto_feed_shows_it(self):
+        # presto-feed strips " temperature": PRESTO, which the Presto leaves out
+        # while it has its own reading (presto's uplink.indoor).
+        names = [s["name"] for s in self.pkg["rest"][0]["sensor"]]
+        self.assertIn("Presto temperature", names)
+
+    def test_nothing_here_changes_anything(self):
+        self.assertEqual(set(self.pkg), {"rest"})
+
 if __name__ == "__main__":
     unittest.main()

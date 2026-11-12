@@ -96,3 +96,5 @@ spec:
           items:
           - key: lcars_panel.yaml
             path: lcars_panel.yaml
+          - key: presto.yaml
+            path: presto.yaml
