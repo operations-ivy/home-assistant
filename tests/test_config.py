@@ -379,7 +379,12 @@ class Outside(unittest.TestCase):
 
     def test_observation_is_fetched_again_once_the_station_is_known(self):
         (auto,) = self.pkg["automation"]
-        self.assertEqual(auto["triggers"][0]["entity_id"], "sensor.nws_station")
+        # The station usually arrives during setup, before automations run: start too.
+        self.assertEqual([tr["trigger"] for tr in auto["triggers"]], ["homeassistant", "state"])
+        self.assertEqual(auto["triggers"][1]["entity_id"], "sensor.nws_station")
+        cond = auto["conditions"][0]["value_template"]
+        self.assertIs(ha_render(cond, states={"sensor.nws_station": "KDCA"}), True)
+        self.assertIs(ha_render(cond, states={"sensor.nws_station": "unknown"}), False)
         self.assertEqual(auto["actions"], [{"action": "homeassistant.update_entity",
                                             "target": {"entity_id": "sensor.outside_temperature"}}])
 

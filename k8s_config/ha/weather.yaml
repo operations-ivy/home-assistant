@@ -9,7 +9,7 @@
 # "Outside temperature" is a name presto-feed leaves off the Presto's rooms
 # (its OUTDOOR pattern). Both lookups run at once on a start, before the
 # station is known, so the automation below fetches the observation again
-# as soon as the station arrives instead of 10 minutes later. Availability
+# on HA's start and whenever the station changes, instead of 10 minutes later. Availability
 # checks value_json first: a failed fetch has none.
 rest:
   - resource_template: >-
@@ -53,14 +53,19 @@ rest:
 automation:
   - id: nws_outside_after_station
     alias: Outside, once the NWS station is known
-    description: Fetches the observation again when sensor.nws_station changes (on a start, it was unknown at the first fetch).
+    description: >-
+      Fetches the observation again once sensor.nws_station is known: on HA's
+      start (the station usually arrives during setup, before automations run)
+      and whenever it changes.
     mode: single
     triggers:
+      - trigger: homeassistant
+        event: start
       - trigger: state
         entity_id: sensor.nws_station
     conditions:
       - condition: template
-        value_template: "{{ trigger.to_state.state not in ('unknown', 'unavailable') }}"
+        value_template: "{{ states('sensor.nws_station') not in ('unknown', 'unavailable') }}"
     actions:
       - action: homeassistant.update_entity
         target:
