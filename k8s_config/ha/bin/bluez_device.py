@@ -11,20 +11,27 @@ bluetooth.service clears that.
 import asyncio
 import sys
 
+USAGE = "usage: bluez_device.py <name>  ->  on | off | missing"
 
-def connected(objects, name):
+
+def _unwrap(variant):
+    """A dbus_fast Variant -> its value; plain values pass through."""
+    return getattr(variant, "value", variant)
+
+
+def connected(objects: dict[str, dict[str, dict]], name: str) -> str:
     """GetManagedObjects' answer -> "on", "off" or "missing" for the device called name."""
     for interfaces in objects.values():
-        device = interfaces.get("org.bluez.Device1")
-        if device is None:
+        if (device := interfaces.get("org.bluez.Device1")) is None:
             continue
-        value = lambda key: getattr(device.get(key), "value", device.get(key))  # noqa: E731
-        if value("Name") == name or value("Alias") == name:
-            return "on" if value("Connected") else "off"
+        props = {key: _unwrap(value) for key, value in device.items()}
+        if name in (props.get("Name"), props.get("Alias")):
+            return "on" if props.get("Connected") else "off"
     return "missing"
 
 
-async def managed_objects():
+async def managed_objects() -> dict:
+    # Imported here so the tests can load connected() without dbus_fast.
     from dbus_fast import BusType, Message, MessageType
     from dbus_fast.aio import MessageBus
 
@@ -45,11 +52,16 @@ async def managed_objects():
     return reply.body[0]
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print(__doc__.strip().splitlines()[2].strip(), file=sys.stderr)
+        print(USAGE, file=sys.stderr)
         return 2
-    print(connected(asyncio.run(managed_objects()), argv[1]))
+    try:
+        objects = asyncio.run(managed_objects())
+    except (OSError, RuntimeError) as e:  # no bluetoothd, no bus: the sensor goes unavailable
+        print(f"bluez_device: {e!r}", file=sys.stderr)
+        return 1
+    print(connected(objects, argv[1]))
     return 0
 
 

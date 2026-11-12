@@ -3,7 +3,9 @@
 ones under test.
 """
 import asyncio
+import datetime
 import glob
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -417,8 +419,6 @@ class Outside(unittest.TestCase):
 
 def bluez_device():
     """ha/bin/bluez_device.py, imported from its file (it isn't a package)."""
-    import importlib.util
-
     spec = importlib.util.spec_from_file_location("bluez_device", os.path.join(K8S, "ha", "bin", "bluez_device.py"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -462,8 +462,6 @@ class LampWatchdog(unittest.TestCase):
         self.assertTrue(mount["readOnly"])
 
     def lamp_down(self, state, minutes):
-        import datetime
-
         now = datetime.datetime(2026, 11, 12, 12, 0, tzinfo=datetime.timezone.utc)
         lamp = None if state is None else types.SimpleNamespace(
             state=state, last_changed=now - datetime.timedelta(minutes=minutes))
