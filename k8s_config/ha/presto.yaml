@@ -4,7 +4,8 @@
 # "up" is false and the values null once its last reading is 5 minutes old,
 # so these go unavailable instead of holding a stale number. "Presto
 # temperature" is the name presto-feed shows as PRESTO, and the Presto
-# leaves this copy out while it has its own reading.
+# leaves this copy out while it has its own reading. Availability checks
+# value_json first: a failed fetch has none.
 rest:
   - resource: http://presto:8767/room.json
     scan_interval: 60
@@ -13,28 +14,28 @@ rest:
       - name: Presto temperature
         unique_id: presto_room_temperature
         value_template: "{{ value_json.temperature_f }}"
-        availability: "{{ value_json.up | default(false) }}"
+        availability: "{{ value_json is defined and value_json.up | default(false) }}"
         device_class: temperature
         state_class: measurement
         unit_of_measurement: "°F"
       - name: Presto humidity
         unique_id: presto_room_humidity
         value_template: "{{ value_json.humidity }}"
-        availability: "{{ value_json.up | default(false) }}"
+        availability: "{{ value_json is defined and value_json.up | default(false) }}"
         device_class: humidity
         state_class: measurement
         unit_of_measurement: "%"
       - name: Presto pressure
         unique_id: presto_room_pressure
         value_template: "{{ value_json.pressure_hpa }}"
-        availability: "{{ value_json.up | default(false) }}"
+        availability: "{{ value_json is defined and value_json.up | default(false) }}"
         device_class: atmospheric_pressure
         state_class: measurement
         unit_of_measurement: "hPa"
       - name: Presto light
         unique_id: presto_room_light
         value_template: "{{ value_json.lux }}"
-        availability: "{{ value_json.up | default(false) }}"
+        availability: "{{ value_json is defined and value_json.up | default(false) }}"
         device_class: illuminance
         state_class: measurement
         unit_of_measurement: "lx"

@@ -26,3 +26,4 @@ configMapGenerator:
       - configuration.yaml=ha/configuration.yaml
       - lcars_panel.yaml=ha/lcars_panel.yaml
       - presto.yaml=ha/presto.yaml
+      - weather.yaml=ha/weather.yaml

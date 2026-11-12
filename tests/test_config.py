@@ -2,6 +2,7 @@
 (scripts/test), so its own YAML loader, templates and check_config are the
 ones under test.
 """
+import asyncio
 import glob
 import os
 import shutil
@@ -301,7 +302,11 @@ class PrestoRoom(unittest.TestCase):
     def test_unavailable_while_its_reading_is_stale(self):
         for sensor in self.sensors:
             with self.subTest(sensor=sensor["name"]):
-                self.assertEqual(sensor["availability"], "{{ value_json.up | default(false) }}")
+                for doc, want in (({"up": True}, True), ({"up": False}, False), ({}, False)):
+                    with self.subTest(doc=doc):
+                        self.assertIs(ha_render(sensor["availability"], value_json=doc), want)
+                # a failed fetch: no value_json at all, and no template error
+                self.assertIs(ha_render(sensor["availability"]), False)
 
     def test_temperature_is_named_as_presto_feed_shows_it(self):
         # presto-feed strips " temperature": PRESTO, which the Presto leaves out
@@ -311,6 +316,96 @@ class PrestoRoom(unittest.TestCase):
     def test_only_sensors_no_automations_or_services(self):
         # Read-only: nothing in this package can change the thermostat or anything else.
         self.assertEqual(set(self.pkg), {"rest"})
+
+
+def ha_render(template, home=None, states=None, **variables):
+    """A template through Home Assistant's own engine (zone.home, states(), round)."""
+    # Imported here, like the calendar test: the module still loads outside the HA image.
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.template import Template
+
+    async def go():
+        with tempfile.TemporaryDirectory() as d:
+            hass = HomeAssistant(d)
+            if home:
+                hass.states.async_set("zone.home", "0", {"latitude": home[0], "longitude": home[1]})
+            for entity, value in (states or {}).items():
+                hass.states.async_set(entity, value)
+            try:
+                return Template(template, hass).async_render(variables)
+            finally:
+                await hass.async_stop(force=True)
+
+    return asyncio.run(go())
+
+
+def observation(temperature, humidity):
+    return {"properties": {"temperature": {"value": temperature}, "relativeHumidity": {"value": humidity}}}
+
+
+class Outside(unittest.TestCase):
+    """The National Weather Service's nearest station, for the dashboard's Outside."""
+
+    def setUp(self):
+        self.pkg = yaml.load(configmap()["weather.yaml"], Loader=_Loader)
+        self.stations, self.obs = self.pkg["rest"]
+        self.sensors = {s["name"]: s for s in self.obs["sensor"]}
+
+    def test_station_comes_from_home_assistants_home_not_this_repo(self):
+        url = ha_render(self.stations["resource_template"], home=(38.897712345, -77.036512345))
+        self.assertEqual(url, "https://api.weather.gov/points/38.8977,-77.0365/stations")
+        station = self.stations["sensor"][0]
+        doc = {"features": [{"properties": {"stationIdentifier": "KDCA"}}]}
+        self.assertEqual(ha_render(station["value_template"], value_json=doc), "KDCA")
+        self.assertIs(ha_render(station["availability"], value_json={"features": []}), False)
+        self.assertEqual(self.stations["scan_interval"], 3600)  # a failed lookup heals within the hour
+
+    def test_observations_from_the_station(self):
+        url = ha_render(self.obs["resource_template"], states={"sensor.nws_station": "KDCA"})
+        self.assertEqual(url, "https://api.weather.gov/stations/KDCA/observations?limit=5")
+
+    def test_newest_observation_with_a_value(self):
+        doc = {"features": [observation(None, None), observation(13.3, 86.53), observation(12.0, 93.6)]}
+        t, rh = self.sensors["Outside temperature"], self.sensors["Outside humidity"]
+        self.assertEqual(ha_render(t["value_template"], value_json=doc), 13.3)
+        self.assertEqual(ha_render(rh["value_template"], value_json=doc), 87)
+        self.assertIs(ha_render(t["availability"], value_json=doc), True)
+
+    def test_unavailable_without_any_value(self):
+        station = self.stations["sensor"][0]
+        for doc in ({"features": [observation(None, None)]}, {"features": []}, {}, None):
+            variables = {} if doc is None else {"value_json": doc}
+            sensors = list(self.sensors.values())
+            if not (doc and doc.get("features")):  # the station is only about having features
+                sensors.append(station)
+            for sensor in sensors:
+                with self.subTest(doc=doc, sensor=sensor["name"]):
+                    self.assertIs(ha_render(sensor["availability"], **variables), False)
+
+    def test_observation_is_fetched_again_once_the_station_is_known(self):
+        (auto,) = self.pkg["automation"]
+        # The station usually arrives during setup, before automations run: start too.
+        self.assertEqual([tr["trigger"] for tr in auto["triggers"]], ["homeassistant", "state"])
+        self.assertEqual(auto["triggers"][1]["entity_id"], "sensor.nws_station")
+        cond = auto["conditions"][0]["value_template"]
+        self.assertIs(ha_render(cond, states={"sensor.nws_station": "KDCA"}), True)
+        self.assertIs(ha_render(cond, states={"sensor.nws_station": "unknown"}), False)
+        self.assertEqual(auto["actions"], [{"action": "homeassistant.update_entity",
+                                            "target": {"entity_id": "sensor.outside_temperature"}}])
+
+    def test_named_so_presto_feed_keeps_it_off_the_rooms(self):
+        # presto-feed's OUTDOOR pattern (outdoor|outside|exterior|weather) skips it.
+        self.assertIn("Outside temperature", self.sensors)
+        self.assertEqual(self.sensors["Outside temperature"]["unit_of_measurement"], "°C")
+
+    def test_names_itself_to_the_nws(self):
+        for rest in self.pkg["rest"]:
+            self.assertIn("User-Agent", rest["headers"])
+
+    def test_only_refreshes_its_own_sensor(self):
+        self.assertEqual(set(self.pkg), {"rest", "automation"})
+        actions = [a["action"] for auto in self.pkg["automation"] for a in auto["actions"]]
+        self.assertEqual(actions, ["homeassistant.update_entity"])
 
 
 if __name__ == "__main__":
