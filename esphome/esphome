@@ -1,0 +1,20 @@
+#!/bin/sh
+# ESPHome for the lamp proxy, pinned, in Docker (nothing to install):
+#   esphome/esphome compile lamp-proxy.yaml
+#   esphome/esphome run lamp-proxy.yaml --device /dev/ttyUSB0   # first flash, over USB-C
+#     (460800 baud fails on this board; ESPHome retries at 115200 by itself)
+#   esphome/esphome run lamp-proxy.yaml --device <its address>  # after that, over Wi-Fi
+#   esphome/esphome logs lamp-proxy.yaml --device <its address>
+# The toolchain is cached in ~/.cache/esphome-docker. A USB serial port, if
+# one is plugged in, is passed through.
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+image=esphome/esphome:2026.9.1
+mkdir -p "$HOME/.cache/esphome-docker"
+devices=""
+for d in /dev/ttyACM* /dev/ttyUSB*; do
+    [ -e "$d" ] && devices="$devices --device $d"
+done
+# shellcheck disable=SC2086
+exec docker run --rm -it --network host $devices \
+    -v "$here":/config -v "$HOME/.cache/esphome-docker":/cache "$image" "$@"
