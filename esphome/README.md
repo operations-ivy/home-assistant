@@ -8,9 +8,9 @@ the Pi's chip and antenna with its Wi-Fi. brick2000's adapter stays as a
 fallback; HA picks the closest connectable scanner by itself.
 
 - `lamp-proxy.yaml`: the config. Bluetooth proxy (active, 3 connection
-  slots), the IR LED on GPIO12 (no commands yet), the button on GPIO39,
-  and the RGB LED as a status light: dark while all is well, red while
-  `light.lamp` is unavailable, dim amber while HA isn't connected.
+  slots), the IR LED on GPIO12 (no commands yet) and the button on GPIO39.
+  The RGB LED (GPIO27) is deliberately left out of the firmware, so it
+  never lights: the proxy may sit in a bedroom with someone asleep.
 - `esphome`: ESPHome pinned (2026.9.1) in Docker; usage in its header.
 - `secrets.yaml` (gitignored, mode 600): Wi-Fi, the API encryption key and
   the OTA password; `secrets.example.yaml` lists the keys. Generate the API
@@ -20,7 +20,7 @@ fallback; HA picks the closest connectable scanner by itself.
 
 The first flash is over USB-C from the laptop: the Atom shows up as an
 FT232 (`0403:6001`, `/dev/serial/by-id/usb-Hades2001_M5stack_*`) on
-`/dev/ttyUSB0`. A charge-only cable lights the LED but shows no serial
+`/dev/ttyUSB0`. A charge-only cable powers it but shows no serial
 port. ESPHome's 460800 baud upload fails on this board; it retries at
 115200 by itself (about 75 s).
 

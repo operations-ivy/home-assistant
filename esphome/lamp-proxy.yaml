@@ -3,8 +3,10 @@
 # Home Assistant reaches light.lamp (Hue BLE) through it over Wi-Fi instead
 # of through brick2000's onboard radio; brick2000's adapter stays as a
 # fallback, and HA picks the closest connectable scanner by itself.
-# Also on the board: the IR LED (no commands yet) and the RGB LED as a
-# status light. See README.md here.
+# Also on the board: the IR LED (no commands yet) and the button.
+# The RGB LED (SK6812 on GPIO27) is deliberately not configured: the proxy
+# may sit in a bedroom, so nothing in the firmware can light it. See
+# README.md here.
 esphome:
   name: lamp-proxy
   friendly_name: Lamp proxy
@@ -43,26 +45,6 @@ remote_transmitter:
   pin: GPIO12
   carrier_duty_percent: 50%
 
-light:
-  - platform: esp32_rmt_led_strip
-    id: status_led
-    name: Status light
-    pin: GPIO27
-    num_leds: 1
-    chipset: SK6812
-    rgb_order: GRB
-    internal: true
-    restore_mode: ALWAYS_OFF
-
-# The lamp as Home Assistant sees it: "unavailable" when HA can't reach it.
-text_sensor:
-  - platform: homeassistant
-    id: lamp_state
-    entity_id: light.lamp
-    internal: true
-    on_value:
-      - script.execute: show_status
-
 binary_sensor:
   - platform: gpio
     id: front_button
@@ -70,39 +52,3 @@ binary_sensor:
     pin:
       number: GPIO39
       inverted: true
-
-# The status light: dark while all is well, red while the lamp is
-# unavailable, dim amber while Home Assistant isn't connected to the proxy.
-script:
-  - id: show_status
-    mode: restart
-    then:
-      - if:
-          condition:
-            not:
-              api.connected:
-          then:
-            - light.turn_on:
-                id: status_led
-                brightness: 20%
-                red: 100%
-                green: 50%
-                blue: 0%
-          else:
-            - if:
-                condition:
-                  lambda: 'return id(lamp_state).state == "unavailable";'
-                then:
-                  - light.turn_on:
-                      id: status_led
-                      brightness: 30%
-                      red: 100%
-                      green: 0%
-                      blue: 0%
-                else:
-                  - light.turn_off: status_led
-
-interval:
-  - interval: 10s
-    then:
-      - script.execute: show_status
