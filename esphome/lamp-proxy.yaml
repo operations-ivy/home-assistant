@@ -1,0 +1,55 @@
+# The lamps' Bluetooth proxy (home-assistant#20): an M5Stack Atom Lite
+# (ESP32-PICO-D4) in the bedroom beside light.lamp2 (Hue BLE), the bulb
+# farthest from brick2000, on a USB wall charger. Home Assistant reaches
+# lamp2 through it over Wi-Fi instead of through brick2000's onboard radio;
+# light.lamp, next to the brick nodes, stays on brick2000's adapter. HA
+# picks the closest connectable scanner for each bulb by itself.
+# Also on the board: the IR LED (no commands yet) and the button.
+# The RGB LED (SK6812 on GPIO27) is deliberately not configured: the proxy
+# sits in a bedroom, so nothing in the firmware can light it. See
+# README.md here.
+esphome:
+  name: lamp-proxy
+  friendly_name: Lamp proxy
+
+esp32:
+  board: m5stack-atom
+  framework:
+    # ESP-IDF: the framework ESPHome recommends for Bluetooth proxies
+    # (less memory used, more connection slots).
+    type: esp-idf
+
+logger:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: true
+
+bluetooth_proxy:
+  active: true
+
+# The IR LED. Which devices it drives, and their codes, aren't decided yet;
+# each command will be a template button calling remote_transmitter.transmit_*.
+remote_transmitter:
+  pin: GPIO12
+  carrier_duty_percent: 50%
+
+binary_sensor:
+  - platform: gpio
+    id: front_button
+    name: Button
+    pin:
+      number: GPIO39
+      inverted: true
