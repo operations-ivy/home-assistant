@@ -1,0 +1,896 @@
+# The CYD panel: an ESP32-2432S028R "Cheap Yellow Display" (2.8" 320x240
+# ILI9341, XPT2046 resistive touch, no PSRAM) as a Home Assistant touch
+# panel. Three pages, switched from the bar at the bottom:
+#   STATUS   the clock and each calendar's next event (shown at boot)
+#   CLIMATE  inside (the ecobee), bedroom and outside, the weather;
+#            climate.thermostat's heat and cool setpoints and mode
+#   LIGHTS   light.lamp, light.lamp2 (bedroom), light.living_room_lamp3
+#
+# Setpoint changes stay inside the guardrails (input_number.thermostat_setpoint_min
+# and _max, the same ones the LCARS panel enforces), keep the heat and cool
+# setpoints 5 °F apart in heat_cool, and are refused while
+# input_select.lcars_panel_lock is hard_locked or Home Assistant isn't
+# connected. A change is sent 1.5 s after the last tap, so a run of taps is
+# one change.
+#
+# The screen dims to 15% after 2 minutes untouched; the first tap after
+# that only wakes it.
+#
+# Actions need the integration's "Allow the device to perform Home Assistant
+# actions" option on (README.md here).
+esphome:
+  name: cyd-panel
+  friendly_name: CYD panel
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret cyd_api_key
+
+ota:
+  - platform: esphome
+    password: !secret cyd_ota_password
+
+# ---------------------------------------------------------------- hardware
+
+spi:
+  - id: display_spi
+    clk_pin: GPIO14
+    mosi_pin: GPIO13
+    miso_pin:
+      number: GPIO12
+      ignore_strapping_warning: true
+  - id: touch_spi
+    clk_pin: GPIO25
+    mosi_pin: GPIO32
+    miso_pin: GPIO39
+
+display:
+  - platform: mipi_spi
+    id: cyd_display
+    model: ESP32-2432S028
+    spi_id: display_spi
+    auto_clear_enabled: false
+    update_interval: never
+
+touchscreen:
+  - platform: xpt2046
+    id: cyd_touch
+    spi_id: touch_spi
+    cs_pin: GPIO33
+    # Polled: the IRQ line (GPIO36) never fired here; it's input-only with
+    # no internal pull-up.
+    update_interval: 50ms
+    threshold: 400
+    calibration:
+      # From four corner taps (2026-11-20).
+      x_min: 360
+      x_max: 3710
+      y_min: 250
+      y_max: 3760
+    # In the panel's native portrait frame: LVGL rotates touches itself
+    # (lvgl: rotation), so no swap_xy here. The panel mirrors x natively.
+    transform:
+      mirror_x: true
+
+output:
+  - platform: ledc
+    id: backlight_pwm
+    pin: GPIO21
+  # The RGB LED on the back (active low): kept off.
+  - platform: gpio
+    id: led_red
+    pin: {number: GPIO4, inverted: true}
+  - platform: gpio
+    id: led_green
+    pin: {number: GPIO16, inverted: true}
+  - platform: gpio
+    id: led_blue
+    pin: {number: GPIO17, inverted: true}
+
+light:
+  - platform: monochromatic
+    id: backlight
+    name: Backlight
+    output: backlight_pwm
+    restore_mode: ALWAYS_ON
+    default_transition_length: 250ms
+
+time:
+  - platform: homeassistant
+    id: ha_time
+
+# ------------------------------------------------- from Home Assistant
+
+sensor:
+  - platform: homeassistant
+    id: inside_temp
+    entity_id: climate.thermostat
+    attribute: current_temperature
+    on_value:
+      - lvgl.label.update:
+          id: home_inside_temp
+          text: {format: "%.0f°", args: [x]}
+  - platform: homeassistant
+    id: inside_humidity
+    entity_id: climate.thermostat
+    attribute: current_humidity
+    on_value:
+      - lvgl.label.update:
+          id: home_inside_hum
+          text: {format: "%.0f%%", args: [x]}
+  - platform: homeassistant
+    id: ha_target_low
+    entity_id: climate.thermostat
+    attribute: target_temp_low
+    on_value: {script.execute: setpoints_from_ha}
+  - platform: homeassistant
+    id: ha_target_high
+    entity_id: climate.thermostat
+    attribute: target_temp_high
+    on_value: {script.execute: setpoints_from_ha}
+  - platform: homeassistant
+    id: ha_target
+    entity_id: climate.thermostat
+    attribute: temperature
+    on_value: {script.execute: setpoints_from_ha}
+  - platform: homeassistant
+    id: guard_min
+    entity_id: input_number.thermostat_setpoint_min
+    on_value: {script.execute: show_climate}
+  - platform: homeassistant
+    id: guard_max
+    entity_id: input_number.thermostat_setpoint_max
+    on_value: {script.execute: show_climate}
+  - platform: homeassistant
+    id: bedroom_temp
+    entity_id: sensor.bedroom_temperature
+    on_value:
+      - lvgl.label.update:
+          id: home_bedroom_temp
+          text: {format: "%.0f°", args: [x]}
+  - platform: homeassistant
+    id: bedroom_humidity
+    entity_id: sensor.bedroom_humidity
+    on_value:
+      - lvgl.label.update:
+          id: home_bedroom_hum
+          text: {format: "%.0f%%", args: [x]}
+  - platform: homeassistant
+    id: outside_temp
+    entity_id: sensor.outside_temperature
+    on_value:
+      - lvgl.label.update:
+          id: home_outside_temp
+          text: {format: "%.0f°", args: [x]}
+  - platform: homeassistant
+    id: outside_humidity
+    entity_id: sensor.outside_humidity
+    on_value:
+      - lvgl.label.update:
+          id: home_outside_hum
+          text: {format: "%.0f%%", args: [x]}
+  # Brightness 0-255; absent (NaN) while a lamp is off.
+  - platform: homeassistant
+    id: lamp1_brightness
+    entity_id: light.lamp
+    attribute: brightness
+    on_value:
+      - if:
+          condition: {lambda: "return !std::isnan(x);"}
+          then:
+            - lvgl.slider.update: {id: lamp1_slider, value: !lambda "return roundf(x / 2.55f);"}
+  - platform: homeassistant
+    id: lamp2_brightness
+    entity_id: light.lamp2
+    attribute: brightness
+    on_value:
+      - if:
+          condition: {lambda: "return !std::isnan(x);"}
+          then:
+            - lvgl.slider.update: {id: lamp2_slider, value: !lambda "return roundf(x / 2.55f);"}
+  - platform: homeassistant
+    id: lamp3_brightness
+    entity_id: light.living_room_lamp3
+    attribute: brightness
+    on_value:
+      - if:
+          condition: {lambda: "return !std::isnan(x);"}
+          then:
+            - lvgl.slider.update: {id: lamp3_slider, value: !lambda "return roundf(x / 2.55f);"}
+
+text_sensor:
+  - platform: homeassistant
+    id: hvac_mode
+    entity_id: climate.thermostat
+    on_value: {script.execute: setpoints_from_ha}
+  - platform: homeassistant
+    id: panel_lock
+    entity_id: input_select.lcars_panel_lock
+    on_value: {script.execute: show_climate}
+  - platform: homeassistant
+    id: weather_state
+    entity_id: weather.forecast_home
+    on_value: {script.execute: show_climate}
+  - platform: homeassistant
+    id: cal_home_msg
+    entity_id: calendar.nineteenthstreethome
+    attribute: message
+    on_value: {script.execute: show_status}
+  - platform: homeassistant
+    id: cal_home_start
+    entity_id: calendar.nineteenthstreethome
+    attribute: start_time
+    on_value: {script.execute: show_status}
+  - platform: homeassistant
+    id: cal_gmail_msg
+    entity_id: calendar.nineteenthstreethome_gmail_com
+    attribute: message
+    on_value: {script.execute: show_status}
+  - platform: homeassistant
+    id: cal_gmail_start
+    entity_id: calendar.nineteenthstreethome_gmail_com
+    attribute: start_time
+    on_value: {script.execute: show_status}
+  - platform: homeassistant
+    id: cal_birthdays_msg
+    entity_id: calendar.birthdays
+    attribute: message
+    on_value: {script.execute: show_status}
+  - platform: homeassistant
+    id: cal_birthdays_start
+    entity_id: calendar.birthdays
+    attribute: start_time
+    on_value: {script.execute: show_status}
+  - platform: homeassistant
+    id: cal_holidays_msg
+    entity_id: calendar.holidays_in_united_states
+    attribute: message
+    on_value: {script.execute: show_status}
+  - platform: homeassistant
+    id: cal_holidays_start
+    entity_id: calendar.holidays_in_united_states
+    attribute: start_time
+    on_value: {script.execute: show_status}
+  - platform: homeassistant
+    id: lamp1_state
+    entity_id: light.lamp
+    on_value:
+      - lambda: id(show_lamp)->execute(id(lamp1_switch), id(lamp1_slider), x);
+  - platform: homeassistant
+    id: lamp2_state
+    entity_id: light.lamp2
+    on_value:
+      - lambda: id(show_lamp)->execute(id(lamp2_switch), id(lamp2_slider), x);
+  - platform: homeassistant
+    id: lamp3_state
+    entity_id: light.living_room_lamp3
+    on_value:
+      - lambda: id(show_lamp)->execute(id(lamp3_switch), id(lamp3_slider), x);
+
+# ------------------------------------------------------- the thermostat
+
+globals:
+  - id: cursor_on
+    type: bool
+    initial_value: "true"
+  # The setpoints on screen: Home Assistant's, or the user's while a change
+  # waits to be sent.
+  - id: heat_sp
+    type: float
+    initial_value: NAN
+  - id: cool_sp
+    type: float
+    initial_value: NAN
+
+script:
+  # Home Assistant's setpoints, unless a change from the screen is pending.
+  - id: setpoints_from_ha
+    then:
+      - if:
+          condition:
+            not:
+              script.is_running: send_setpoints
+          then:
+            - lambda: |-
+                const auto &mode = id(hvac_mode).state;
+                if (mode == "heat") {
+                  id(heat_sp) = id(ha_target).state;
+                  id(cool_sp) = NAN;
+                } else if (mode == "cool") {
+                  id(heat_sp) = NAN;
+                  id(cool_sp) = id(ha_target).state;
+                } else if (mode == "heat_cool") {
+                  id(heat_sp) = id(ha_target_low).state;
+                  id(cool_sp) = id(ha_target_high).state;
+                } else {
+                  id(heat_sp) = NAN;
+                  id(cool_sp) = NAN;
+                }
+      - script.execute: show_climate
+
+  # STATUS: each calendar's next event, soonest first.
+  - id: show_status
+    then:
+      - lvgl.label.update:
+          id: status_list
+          text: !lambda |-
+            struct Ev { std::string start, msg; };
+            std::vector<Ev> evs;
+            auto add = [&](text_sensor::TextSensor *start, text_sensor::TextSensor *msg) {
+              if (!start->has_state() || !msg->has_state()) return;
+              const auto &s = start->state;
+              if (s.size() < 16 || msg->state.empty() || msg->state == "None") return;
+              evs.push_back({s, msg->state});
+            };
+            add(id(cal_home_start), id(cal_home_msg));
+            add(id(cal_gmail_start), id(cal_gmail_msg));
+            add(id(cal_birthdays_start), id(cal_birthdays_msg));
+            add(id(cal_holidays_start), id(cal_holidays_msg));
+            std::sort(evs.begin(), evs.end(), [](const Ev &a, const Ev &b) { return a.start < b.start; });
+            if (evs.empty()) return std::string("  (nothing coming up)");
+            std::string out;
+            for (const auto &e : evs) {
+              struct tm tm = {};
+              int hh = 0, mm = 0;
+              if (sscanf(e.start.c_str(), "%d-%d-%d %d:%d", &tm.tm_year, &tm.tm_mon, &tm.tm_mday, &hh, &mm) < 3) continue;
+              tm.tm_year -= 1900; tm.tm_mon -= 1; tm.tm_hour = 12;
+              mktime(&tm);
+              char when[24];
+              strftime(when, sizeof when, "%a %m-%d", &tm);
+              std::string line = when;
+              if (hh || mm) line += str_sprintf(" %02d:%02d", hh, mm);
+              // The pixel font is ASCII: fold curly quotes, drop the rest.
+              std::string msg;
+              for (size_t i = 0; i < e.msg.size(); i++) {
+                unsigned char c = e.msg[i];
+                if (c < 0x80) { msg += (char) c; continue; }
+                if (c == 0xE2 && i + 2 < e.msg.size() && (unsigned char) e.msg[i + 1] == 0x80) {
+                  unsigned char d = e.msg[i + 2];
+                  msg += (d == 0x98 || d == 0x99) ? '\'' : (d == 0x9C || d == 0x9D) ? '"' : (d == 0x93 || d == 0x94) ? '-' : '?';
+                  i += 2;
+                }
+              }
+              if (msg.size() > 34) msg = msg.substr(0, 33) + "~";
+              if (!out.empty()) out += "\n";
+              out += "> " + line + "\n  " + msg;
+            }
+            return out;
+
+  # Redraw the climate page from the globals and Home Assistant's state.
+  - id: show_climate
+    then:
+      - lvgl.label.update:
+          id: heat_value
+          text: !lambda |-
+            if (std::isnan(id(heat_sp))) return std::string("--");
+            return str_sprintf("%.0f°", id(heat_sp));
+      - lvgl.label.update:
+          id: cool_value
+          text: !lambda |-
+            if (std::isnan(id(cool_sp))) return std::string("--");
+            return str_sprintf("%.0f°", id(cool_sp));
+      - lvgl.label.update:
+          id: climate_note
+          text: !lambda |-
+            if (!id(climate_editable).state) {
+              if (id(panel_lock).state == "hard_locked") return std::string("! LOCKED FROM HOME ASSISTANT");
+              return std::string("! NO LINK TO HOME ASSISTANT");
+            }
+            std::string s = id(weather_state).state;
+            if (s.empty() || s == "unknown" || s == "unavailable") return std::string("");
+            if (s == "partlycloudy") s = "partly cloudy";
+            if (s == "clear-night") s = "clear";
+            for (auto &c : s) c = (c == '-' || c == '_') ? ' ' : toupper(c);
+            return "> WEATHER: " + s;
+      - lambda: |-
+          const bool on = id(climate_editable).state;
+          const auto &mode = id(hvac_mode).state;
+          auto set = [](lv_obj_t *obj, bool enabled) {
+            if (enabled) lv_obj_clear_state(obj, LV_STATE_DISABLED);
+            else lv_obj_add_state(obj, LV_STATE_DISABLED);
+          };
+          const bool heat = on && !std::isnan(id(heat_sp));
+          const bool cool = on && !std::isnan(id(cool_sp));
+          set(id(heat_down), heat);
+          set(id(heat_up), heat);
+          set(id(cool_down), cool);
+          set(id(cool_up), cool);
+          set(id(mode_off), on);
+          set(id(mode_heat), on);
+          set(id(mode_cool), on);
+          set(id(mode_auto), on);
+          auto mark = [](lv_obj_t *obj, bool checked) {
+            if (checked) lv_obj_add_state(obj, LV_STATE_CHECKED);
+            else lv_obj_clear_state(obj, LV_STATE_CHECKED);
+          };
+          mark(id(mode_off), mode == "off");
+          mark(id(mode_heat), mode == "heat");
+          mark(id(mode_cool), mode == "cool");
+          mark(id(mode_auto), mode == "heat_cool");
+
+  # Move one setpoint by `step` °F, inside the guardrails and the 5 °F gap,
+  # then send it once the taps stop.
+  - id: nudge
+    parameters:
+      which: int    # 0 heat, 1 cool
+      step: float
+    then:
+      - if:
+          condition:
+            lambda: return id(climate_editable).state;
+          then:
+            - lambda: |-
+                const float lo = id(guard_min).state, hi = id(guard_max).state;
+                const bool both = id(hvac_mode).state == "heat_cool";
+                float &sp = which == 0 ? id(heat_sp) : id(cool_sp);
+                if (std::isnan(sp)) return;
+                float v = std::min(std::max(sp + step, lo), hi);
+                if (both && which == 0) v = std::min(v, id(cool_sp) - 5.0f);
+                if (both && which == 1) v = std::max(v, id(heat_sp) + 5.0f);
+                if (v < lo || v > hi) return;
+                sp = v;
+            - script.execute: show_climate
+            - script.execute: send_setpoints
+
+  - id: send_setpoints
+    mode: restart
+    then:
+      - delay: 1500ms
+      - if:
+          condition:
+            lambda: return id(climate_editable).state;
+          then:
+            - if:
+                condition:
+                  lambda: return id(hvac_mode).state == "heat_cool";
+                then:
+                  - homeassistant.action:
+                      action: climate.set_temperature
+                      data:
+                        entity_id: climate.thermostat
+                        target_temp_low: !lambda return id(heat_sp);
+                        target_temp_high: !lambda return id(cool_sp);
+                else:
+                  - homeassistant.action:
+                      action: climate.set_temperature
+                      data:
+                        entity_id: climate.thermostat
+                        temperature: !lambda |-
+                          return id(hvac_mode).state == "heat" ? id(heat_sp) : id(cool_sp);
+      # Back to Home Assistant's view: what the ecobee accepted.
+      - delay: 3s
+      - script.execute: setpoints_from_ha
+
+  - id: set_mode
+    parameters:
+      mode: string
+    then:
+      - if:
+          condition:
+            lambda: return id(climate_editable).state && id(hvac_mode).state != mode;
+          then:
+            - homeassistant.action:
+                action: climate.set_hvac_mode
+                data:
+                  entity_id: climate.thermostat
+                  hvac_mode: !lambda return mode;
+
+  # A lamp's row: the switch follows its state, the row is disabled while
+  # the lamp is unavailable.
+  - id: show_lamp
+    parameters:
+      sw: lv_obj_t*
+      slider: lv_obj_t*
+      state: string
+    then:
+      - lambda: |-
+          if (state == "on") lv_obj_add_state(sw, LV_STATE_CHECKED);
+          else lv_obj_clear_state(sw, LV_STATE_CHECKED);
+          const bool ok = state == "on" || state == "off";
+          if (ok) { lv_obj_clear_state(sw, LV_STATE_DISABLED); lv_obj_clear_state(slider, LV_STATE_DISABLED); }
+          else { lv_obj_add_state(sw, LV_STATE_DISABLED); lv_obj_add_state(slider, LV_STATE_DISABLED); }
+
+binary_sensor:
+  # Setpoints and the mode can change: connected to Home Assistant, not
+  # hard-locked, guardrails known.
+  - platform: template
+    id: climate_editable
+    internal: true
+    lambda: |-
+      return api::global_api_server->is_connected()
+          && id(panel_lock).has_state() && id(panel_lock).state != "hard_locked"
+          && !std::isnan(id(guard_min).state) && !std::isnan(id(guard_max).state);
+    on_state: {script.execute: show_climate}
+
+# ------------------------------------------------------------------ screen
+# The look: a green terminal. Pixel fonts drawn at 1 bit per pixel (no
+# smoothing, so every pixel is hard-edged), square corners, a shell prompt
+# at the top of each page and a blinking cursor on the clock.
+
+font:
+  - file: "gfonts://VT323"
+    id: f_s
+    size: 20
+    bpp: 1
+  - file: "gfonts://VT323"
+    id: f_m
+    size: 24
+    bpp: 1
+  - file: "gfonts://VT323"
+    id: f_l
+    size: 40
+    bpp: 1
+  - file: "gfonts://VT323"
+    id: f_xl
+    size: 64
+    bpp: 1
+  - file: "gfonts://Silkscreen"
+    id: f_nav
+    size: 16
+    bpp: 1
+
+lvgl:
+  displays: [cyd_display]
+  touchscreens: [cyd_touch]
+  rotation: 90
+  bg_color: 0x000000
+  text_color: 0x33FF66
+  text_font: f_s
+  theme:
+    obj:
+      radius: 0
+      scrollbar_mode: "OFF"
+      scrollable: false
+    label:
+      text_color: 0x33FF66
+    button:
+      bg_color: 0x000000
+      bg_opa: COVER
+      border_color: 0x33FF66
+      border_width: 1
+      radius: 0
+      shadow_width: 0
+      text_color: 0x33FF66
+      pressed:
+        bg_color: 0x1A7A33
+      checked:
+        bg_color: 0x33FF66
+        text_color: 0x000000
+      disabled:
+        border_color: 0x1F3A26
+        text_color: 0x1F3A26
+    switch:
+      radius: 0
+      bg_color: 0x0A1F10
+      border_color: 0x33FF66
+      border_width: 1
+      indicator:
+        radius: 0
+        checked:
+          bg_color: 0x33FF66
+      knob:
+        radius: 0
+        bg_color: 0x000000
+        border_color: 0x33FF66
+        border_width: 1
+        pad_all: -2
+      disabled:
+        opa: 35%
+    slider:
+      radius: 0
+      bg_color: 0x0A1F10
+      border_color: 0x1A7A33
+      border_width: 1
+      indicator:
+        radius: 0
+        bg_color: 0x33FF66
+      knob:
+        radius: 0
+        bg_color: 0x33FF66
+        pad_all: 2
+      disabled:
+        opa: 35%
+
+  on_idle:
+    - timeout: 120s
+      then:
+        - lvgl.widget.show: wake_cover
+        - light.turn_on: {id: backlight, brightness: 15%}
+
+  top_layer:
+    widgets:
+      # The page bar.
+      - obj:
+          align: BOTTOM_MID
+          width: 320
+          height: 38
+          pad_all: 3
+          bg_color: 0x000000
+          border_color: 0x1A7A33
+          border_width: 1
+          border_side: TOP
+          layout:
+            type: flex
+            flex_flow: ROW
+            flex_align_main: SPACE_EVENLY
+            flex_align_cross: CENTER
+          widgets:
+            - button:
+                id: nav_status
+                width: 98
+                height: 30
+                widgets: [{label: {text: STATUS, align: CENTER, text_font: f_nav}}]
+                on_click: {lvgl.page.show: status_page}
+            - button:
+                id: nav_climate
+                width: 98
+                height: 30
+                widgets: [{label: {text: CLIMATE, align: CENTER, text_font: f_nav}}]
+                on_click: {lvgl.page.show: climate_page}
+            - button:
+                id: nav_lights
+                width: 98
+                height: 30
+                widgets: [{label: {text: LIGHTS, align: CENTER, text_font: f_nav}}]
+                on_click: {lvgl.page.show: lights_page}
+      # Over everything while the screen is dimmed: the first tap only wakes it.
+      - obj:
+          id: wake_cover
+          width: 320
+          height: 240
+          align: TOP_LEFT
+          bg_opa: TRANSP
+          border_width: 0
+          hidden: true
+          on_click:
+            - lvgl.widget.hide: wake_cover
+            - light.turn_on: {id: backlight, brightness: 100%}
+
+  pages:
+    # ---------------------------------------------------------- STATUS
+    - id: status_page
+      bg_color: 0x000000
+      on_load:
+        - lvgl.widget.update: {id: nav_status, state: {checked: true}}
+        - lvgl.widget.update: {id: [nav_climate, nav_lights], state: {checked: false}}
+      widgets:
+        - label: {id: status_clock, x: 8, y: -4, text: "--:--", text_font: f_xl}
+        - label: {id: status_date, align: TOP_RIGHT, x: -8, y: 8, text: "", text_font: f_m}
+        - label: {id: status_year, align: TOP_RIGHT, x: -8, y: 32, text: "", text_color: 0x1A7A33}
+        - obj:
+            x: 0
+            y: 62
+            width: 320
+            height: 138
+            pad_all: 0
+            pad_top: 4
+            bg_opa: TRANSP
+            border_color: 0x1A7A33
+            border_width: 1
+            border_side: TOP
+            widgets:
+              - label:
+                  id: status_list
+                  x: 6
+                  y: 0
+                  width: 308
+                  height: 132
+                  long_mode: CLIP
+                  text: "  (waiting for Home Assistant)"
+
+    # --------------------------------------------------------- CLIMATE
+    - id: climate_page
+      bg_color: 0x000000
+      on_load:
+        - lvgl.widget.update: {id: nav_climate, state: {checked: true}}
+        - lvgl.widget.update: {id: [nav_lights, nav_status], state: {checked: false}}
+      widgets:
+        # Temperatures: inside (the ecobee), bedroom, outside.
+        - obj:
+            x: 0
+            y: 2
+            width: 320
+            height: 26
+            pad_all: 0
+            bg_opa: TRANSP
+            border_color: 0x1A7A33
+            border_width: 1
+            border_side: [TOP, BOTTOM]
+            widgets:
+              - label: {x: 6, y: 1, text: "IN", text_color: 0x1A7A33}
+              - label: {id: home_inside_temp, x: 26, y: 1, text: "--"}
+              - label: {id: home_inside_hum, x: 60, y: 1, text: "", text_color: 0x1A7A33}
+              - label: {x: 108, y: 1, text: "BED", text_color: 0x1A7A33}
+              - label: {id: home_bedroom_temp, x: 138, y: 1, text: "--"}
+              - label: {id: home_bedroom_hum, x: 172, y: 1, text: "", text_color: 0x1A7A33}
+              - label: {x: 216, y: 1, text: "OUT", text_color: 0x1A7A33}
+              - label: {id: home_outside_temp, x: 246, y: 1, text: "--"}
+              - label: {id: home_outside_hum, x: 280, y: 1, text: "", text_color: 0x1A7A33}
+        # Heat row
+        - label: {x: 10, y: 46, text: "HEAT>", text_color: 0xFF9933, text_font: f_m}
+        - button:
+            id: heat_down
+            x: 100
+            y: 36
+            width: 56
+            height: 44
+            widgets: [{label: {text: "[-]", align: CENTER, text_font: f_m}}]
+            on_click: {script.execute: {id: nudge, which: 0, step: -1.0}}
+        - label: {id: heat_value, x: 160, y: 38, width: 94, text: "--", text_align: CENTER, text_font: f_l, text_color: 0xFF9933}
+        - button:
+            id: heat_up
+            x: 256
+            y: 36
+            width: 56
+            height: 44
+            widgets: [{label: {text: "[+]", align: CENTER, text_font: f_m}}]
+            on_click: {script.execute: {id: nudge, which: 0, step: 1.0}}
+        # Cool row
+        - label: {x: 10, y: 98, text: "COOL>", text_color: 0x33CCFF, text_font: f_m}
+        - button:
+            id: cool_down
+            x: 100
+            y: 88
+            width: 56
+            height: 44
+            widgets: [{label: {text: "[-]", align: CENTER, text_font: f_m}}]
+            on_click: {script.execute: {id: nudge, which: 1, step: -1.0}}
+        - label: {id: cool_value, x: 160, y: 90, width: 94, text: "--", text_align: CENTER, text_font: f_l, text_color: 0x33CCFF}
+        - button:
+            id: cool_up
+            x: 256
+            y: 88
+            width: 56
+            height: 44
+            widgets: [{label: {text: "[+]", align: CENTER, text_font: f_m}}]
+            on_click: {script.execute: {id: nudge, which: 1, step: 1.0}}
+        # Mode
+        - button:
+            id: mode_off
+            x: 8
+            y: 158
+            width: 72
+            height: 34
+            widgets: [{label: {text: "OFF", align: CENTER, text_font: f_nav}}]
+            on_click: {script.execute: {id: set_mode, mode: "off"}}
+        - button:
+            id: mode_heat
+            x: 85
+            y: 158
+            width: 72
+            height: 34
+            widgets: [{label: {text: "HEAT", align: CENTER, text_font: f_nav}}]
+            on_click: {script.execute: {id: set_mode, mode: "heat"}}
+        - button:
+            id: mode_cool
+            x: 162
+            y: 158
+            width: 72
+            height: 34
+            widgets: [{label: {text: "COOL", align: CENTER, text_font: f_nav}}]
+            on_click: {script.execute: {id: set_mode, mode: "cool"}}
+        - button:
+            id: mode_auto
+            x: 239
+            y: 158
+            width: 72
+            height: 34
+            widgets: [{label: {text: "AUTO", align: CENTER, text_font: f_nav}}]
+            on_click: {script.execute: {id: set_mode, mode: "heat_cool"}}
+        - label: {id: climate_note, x: 8, y: 135, text: "", text_color: 0x1A7A33}
+
+    # ---------------------------------------------------------- LIGHTS
+    - id: lights_page
+      bg_color: 0x000000
+      on_load:
+        - lvgl.widget.update: {id: nav_lights, state: {checked: true}}
+        - lvgl.widget.update: {id: [nav_climate, nav_status], state: {checked: false}}
+      widgets:
+        - label: {x: 6, y: 0, text: "root@cyd:~$ ./lights", text_color: 0x1A7A33}
+        - label: {x: 10, y: 28, text: "LAMP_01", text_font: f_m}
+        - switch:
+            id: lamp1_switch
+            x: 254
+            y: 26
+            width: 56
+            height: 26
+            on_click:
+              - homeassistant.action:
+                  action: light.toggle
+                  data: {entity_id: light.lamp}
+        - slider:
+            id: lamp1_slider
+            x: 14
+            y: 60
+            width: 292
+            height: 10
+            min_value: 1
+            max_value: 100
+            on_release:
+              - homeassistant.action:
+                  action: light.turn_on
+                  data:
+                    entity_id: light.lamp
+                    brightness_pct: !lambda return (int) x;
+
+        - label: {x: 10, y: 86, text: "LAMP_02 // BEDROOM", text_font: f_m}
+        - switch:
+            id: lamp2_switch
+            x: 254
+            y: 84
+            width: 56
+            height: 26
+            on_click:
+              - homeassistant.action:
+                  action: light.toggle
+                  data: {entity_id: light.lamp2}
+        - slider:
+            id: lamp2_slider
+            x: 14
+            y: 118
+            width: 292
+            height: 10
+            min_value: 1
+            max_value: 100
+            on_release:
+              - homeassistant.action:
+                  action: light.turn_on
+                  data:
+                    entity_id: light.lamp2
+                    brightness_pct: !lambda return (int) x;
+
+        - label: {x: 10, y: 144, text: "LAMP_03", text_font: f_m}
+        - switch:
+            id: lamp3_switch
+            x: 254
+            y: 142
+            width: 56
+            height: 26
+            on_click:
+              - homeassistant.action:
+                  action: light.toggle
+                  data: {entity_id: light.living_room_lamp3}
+        - slider:
+            id: lamp3_slider
+            x: 14
+            y: 176
+            width: 292
+            height: 10
+            min_value: 1
+            max_value: 100
+            on_release:
+              - homeassistant.action:
+                  action: light.turn_on
+                  data:
+                    entity_id: light.living_room_lamp3
+                    brightness_pct: !lambda return (int) x;
+
+interval:
+  # The clock, with a blinking cursor.
+  - interval: 1s
+    then:
+      - if:
+          condition: {lambda: "return id(ha_time).now().is_valid();"}
+          then:
+            - lambda: id(cursor_on) = !id(cursor_on);
+            - lvgl.label.update:
+                id: status_clock
+                text: !lambda |-
+                  return id(ha_time).now().strftime("%H:%M") + (id(cursor_on) ? "_" : " ");
+            - lvgl.label.update:
+                id: status_date
+                text: !lambda return id(ha_time).now().strftime("%a %b %d");
+            - lvgl.label.update:
+                id: status_year
+                text: !lambda return id(ha_time).now().strftime("%Y-%m-%d");
